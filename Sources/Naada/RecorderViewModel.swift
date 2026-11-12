@@ -7,17 +7,32 @@ final class RecorderViewModel: ObservableObject {
     static let shared = RecorderViewModel()
 
     @Published private(set) var applications: [SourceApplication] = []
-    @Published var selectedApplicationPID: pid_t? {
+    @Published var selectedApplicationID: RememberedSource? {
         didSet {
+            guard !isRestoringSettings else { return }
+
+            settings.rememberedSource = selectedApplicationID
+            applications.removeAll {
+                !$0.isRunning && $0.rememberedSource != selectedApplicationID
+            }
+
             guard let application = selectedApplication else { return }
-            let trimmed = sessionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty || sessionTitle == lastSuggestedTitle {
-                sessionTitle = application.name
-                lastSuggestedTitle = application.name
+            if let suggested = SessionTitlePolicy.suggestedTitle(
+                currentTitle: sessionTitle,
+                lastSuggestedTitle: lastSuggestedTitle,
+                sourceName: application.name
+            ) {
+                sessionTitle = suggested
+                lastSuggestedTitle = suggested
             }
         }
     }
-    @Published var sessionTitle: String = ""
+    @Published var sessionTitle: String = "" {
+        didSet {
+            guard !isRestoringSettings else { return }
+            settings.sessionTitle = sessionTitle
+        }
+    }
     @Published var outputFolder: URL? {
         didSet {
             if let outputFolder {
@@ -33,17 +48,30 @@ final class RecorderViewModel: ObservableObject {
     @Published private(set) var audioLevel: Float = 0
     @Published var errorMessage: String?
 
-    private static let outputFolderKey = "naada.outputFolderPath"
+    private static let outputFolderKey = SessionSettingsStore.outputFolderPathKey
 
+    private let settings: SessionSettingsStore
+    private var isRestoringSettings = false
     private var ticker: Timer?
     private var engine: AudioCaptureEngine?
     private var sessionToken: UUID?
     private var lastSuggestedTitle = ""
     private var workspaceObservers: [NSObjectProtocol] = []
 
-    init() {
+    init(settings: SessionSettingsStore = SessionSettingsStore()) {
+        self.settings = settings
         restoreOutputFolder()
+
+        // La source et le titre restaurés sont posés avant la première liste
+        // d'applications : la sélection retrouvée ne doit pas déclencher la
+        // suggestion de titre.
+        isRestoringSettings = true
+        let restored = settings.restore()
+        selectedApplicationID = restored.rememberedSource
+        sessionTitle = restored.title
         refreshApplications()
+        isRestoringSettings = false
+
         observeWorkspace()
     }
 
@@ -55,7 +83,18 @@ final class RecorderViewModel: ObservableObject {
     }
 
     var selectedApplication: SourceApplication? {
-        applications.first { $0.pid == selectedApplicationPID }
+        guard let selectedApplicationID else { return nil }
+        return applications.first { $0.rememberedSource == selectedApplicationID }
+    }
+
+    /// La source ne peut être capturée que si un processus vivant correspond
+    /// à l'identité mémorisée. Une source absente reste sélectionnée et
+    /// visible, mais ne démarre rien.
+    var selectedLiveApplication: SourceApplication? {
+        guard let application = selectedApplication, application.isRunning else {
+            return nil
+        }
+        return application
     }
 
     var phase: RecorderPhase {
@@ -68,7 +107,7 @@ final class RecorderViewModel: ObservableObject {
 
     var canStart: Bool {
         !session.state.isBusy
-            && selectedApplication != nil
+            && selectedLiveApplication != nil
             && outputFolder != nil
     }
 
@@ -81,13 +120,9 @@ final class RecorderViewModel: ObservableObject {
     }
 
     func refreshApplications() {
-        let previous = selectedApplicationPID
-        applications = RunningApplicationCatalog.list()
-        if let previous, applications.contains(where: { $0.pid == previous }) {
-            selectedApplicationPID = previous
-        } else if selectedApplicationPID != nil {
-            selectedApplicationPID = nil
-        }
+        applications = RunningApplicationCatalog.list(
+            remembering: selectedApplicationID
+        )
     }
 
     func chooseOutputFolder() {
@@ -105,7 +140,10 @@ final class RecorderViewModel: ObservableObject {
     }
 
     func startRecording() {
-        guard canStart, let application = selectedApplication, let folder = outputFolder else {
+        guard canStart,
+              let application = selectedLiveApplication,
+              let folder = outputFolder
+        else {
             return
         }
 

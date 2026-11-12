@@ -1,3 +1,4 @@
+import NaadaCore
 import SwiftUI
 
 struct ContentView: View {
@@ -74,12 +75,12 @@ struct ContentView: View {
         VStack(spacing: 0) {
             settingRow(icon: "app", title: "Application source") {
                 HStack(spacing: 8) {
-                    Picker("", selection: $model.selectedApplicationPID) {
+                    Picker("", selection: $model.selectedApplicationID) {
                         Text("Choisir une application…")
-                            .tag(pid_t?.none)
+                            .tag(RememberedSource?.none)
                         ForEach(model.applications) { application in
                             Text(application.name)
-                                .tag(Optional(application.pid))
+                                .tag(RememberedSource?.some(application.rememberedSource))
                         }
                     }
                     .labelsHidden()
@@ -283,6 +284,9 @@ struct ContentView: View {
         switch model.phase {
         case .idle:
             if let application = model.selectedApplication {
+                if !application.isRunning {
+                    return "\(application.name) n'est pas ouverte. Ouvrez-la pour enregistrer."
+                }
                 if model.outputFolder == nil {
                     return "Choisissez un dossier de sortie pour \(application.name)."
                 }
