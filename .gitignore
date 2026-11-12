@@ -1,0 +1,6 @@
+.build/
+Naada.app/
+.test-artifacts/
+.devcheck/
+.orchestrator/
+.DS_Store
