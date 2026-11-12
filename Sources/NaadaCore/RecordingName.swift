@@ -111,7 +111,11 @@ public enum RecordingNameError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .noAvailableName:
-            return "Aucun nom de fichier libre n'a été trouvé pour cet enregistrement."
+            return NSLocalizedString(
+                "No available file name was found for this recording.",
+                bundle: .main,
+                comment: "Recording name exhaustion error"
+            )
         }
     }
 }

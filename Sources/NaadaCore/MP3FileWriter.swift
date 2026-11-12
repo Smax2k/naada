@@ -205,9 +205,17 @@ public enum MP3FileWriterError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unsupportedConfiguration:
-            return "Configuration MP3 non prise en charge par l'encodeur intégré."
+            return NSLocalizedString(
+                "The MP3 configuration is not supported by the built-in encoder.",
+                bundle: .main,
+                comment: "Unsupported MP3 configuration error"
+            )
         case .encoderInitialisationFailed:
-            return "L'encodeur MP3 intégré n'a pas pu démarrer."
+            return NSLocalizedString(
+                "The built-in MP3 encoder could not start.",
+                bundle: .main,
+                comment: "MP3 encoder initialisation error"
+            )
         }
     }
 }

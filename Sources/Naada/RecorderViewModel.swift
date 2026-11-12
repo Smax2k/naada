@@ -158,8 +158,11 @@ final class RecorderViewModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Choisir"
-        panel.message = "Dossier de destination des enregistrements MP3"
+        panel.prompt = NSLocalizedString("Choose", comment: "Open panel choose button")
+        panel.message = NSLocalizedString(
+            "Destination folder for MP3 recordings",
+            comment: "Open panel message"
+        )
         panel.directoryURL = outputFolder
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -304,7 +307,10 @@ final class RecorderViewModel: ObservableObject {
                     }
                     guard engine.isCaptureActive else {
                         let message = engine.startupStopMessage
-                            ?? "La capture ne s'est pas stabilisée pendant le démarrage."
+                            ?? NSLocalizedString(
+                                "Capture did not stabilize during startup.",
+                                comment: "Capture startup failure"
+                            )
                         resetAudioLevel()
                         sessionToken = nil
                         self.engine = nil
@@ -366,7 +372,13 @@ final class RecorderViewModel: ObservableObject {
                 }
                 session.finalized()
                 if let warning = result.warning {
-                    errorMessage = "Le fichier a été finalisé, mais l'arrêt de la capture signale : \(warning)"
+                    errorMessage = String(
+                        format: NSLocalizedString(
+                            "The file was finalized, but stopping the capture reported: %@",
+                            comment: "Stop warning after finalizing"
+                        ),
+                        warning
+                    )
                 }
             } catch {
                 self.engine = nil
@@ -447,14 +459,29 @@ final class RecorderViewModel: ObservableObject {
         now = Date()
         stopTicker()
         lastOutputURL = url
-        errorMessage = "La capture s'est arrêtée : \(error.localizedDescription)"
-            + (url == nil ? "" : " Le fichier partiel a été conservé.")
+        var message = String(
+            format: NSLocalizedString("Capture stopped: %@", comment: "Unexpected capture stop"),
+            error.localizedDescription
+        )
+        if url != nil {
+            message += " " + NSLocalizedString(
+                "The partial file was kept.",
+                comment: "Unexpected capture stop with kept partial file"
+            )
+        }
+        errorMessage = message
         engine = nil
     }
 
     private func handleAudioError(_ error: Error, token: UUID) {
         guard sessionToken == token, session.state.isRecording else { return }
-        errorMessage = "Erreur d'écriture pendant la capture : \(error.localizedDescription)"
+        errorMessage = String(
+            format: NSLocalizedString(
+                "Write error during capture: %@",
+                comment: "Audio write error during capture"
+            ),
+            error.localizedDescription
+        )
         stopRecording()
     }
 

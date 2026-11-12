@@ -49,7 +49,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Naada")
                     .font(.system(size: 26, weight: .semibold, design: .rounded))
-                Text("Enregistreur de session audio")
+                Text(NSLocalizedString("Session audio recorder", comment: "Window subtitle"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -91,7 +91,7 @@ struct ContentView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .disabled(model.isBusy)
-        .help("Gérer les presets source, titre et dossier")
+        .help(NSLocalizedString("Manage source, title and folder presets", comment: "Preset button tooltip"))
         .accessibilityIdentifier("presetManagerButton")
         .popover(isPresented: $isPresetManagerPresented, arrowEdge: .bottom) {
             PresetManagerView(model: model)
@@ -100,10 +100,10 @@ struct ContentView: View {
 
     private var settingsCard: some View {
         VStack(spacing: 0) {
-            settingRow(icon: "app", title: "Application source") {
+            settingRow(icon: "app", title: NSLocalizedString("Source application", comment: "Source picker row title")) {
                 HStack(spacing: 8) {
                     Picker("", selection: $model.selectedApplicationID) {
-                        Text("Choisir une application…")
+                        Text(NSLocalizedString("Choose an application…", comment: "Source picker placeholder"))
                             .tag(RememberedSource?.none)
                         ForEach(model.applications) { application in
                             Text(application.name)
@@ -120,7 +120,7 @@ struct ContentView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                     .buttonStyle(.borderless)
-                    .help("Actualiser la liste des applications ouvertes")
+                    .help(NSLocalizedString("Refresh the list of open applications", comment: "Refresh applications tooltip"))
                     .frame(width: settingActionWidth, alignment: .trailing)
                     .disabled(model.isBusy)
                 }
@@ -128,7 +128,7 @@ struct ContentView: View {
 
             Divider().padding(.leading, 42)
 
-            settingRow(icon: "folder", title: "Dossier de sortie") {
+            settingRow(icon: "folder", title: NSLocalizedString("Output folder", comment: "Output folder row title")) {
                 HStack(spacing: 8) {
                     Text(folderDisplay)
                         .lineLimit(1)
@@ -136,7 +136,7 @@ struct ContentView: View {
                         .foregroundStyle(model.outputFolder == nil ? .secondary : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Button("Choisir…") {
+                    Button(NSLocalizedString("Choose…", comment: "Choose output folder button")) {
                         model.chooseOutputFolder()
                     }
                     .frame(width: settingActionWidth, alignment: .trailing)
@@ -146,8 +146,8 @@ struct ContentView: View {
 
             Divider().padding(.leading, 42)
 
-            settingRow(icon: "textformat", title: "Titre de session") {
-                TextField("Réunion, cours, appel…", text: $model.sessionTitle)
+            settingRow(icon: "textformat", title: NSLocalizedString("Session title", comment: "Session title row title")) {
+                TextField(NSLocalizedString("Meeting, class, call…", comment: "Session title placeholder"), text: $model.sessionTitle)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: .infinity)
                     .disabled(model.isBusy)
@@ -190,7 +190,7 @@ struct ContentView: View {
                         Button {
                             model.stopRecording()
                         } label: {
-                            Label("Arrêter", systemImage: "stop.fill")
+                            Label(NSLocalizedString("Stop", comment: "Stop recording button"), systemImage: "stop.fill")
                                 .frame(minWidth: 126)
                         }
                         .buttonStyle(.borderedProminent)
@@ -200,7 +200,9 @@ struct ContentView: View {
                         HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
-                            Text(model.phase == .stopping ? "Finalisation…" : "Préparation…")
+                            Text(model.phase == .stopping
+                                ? NSLocalizedString("Finalizing…", comment: "Stop in progress")
+                                : NSLocalizedString("Preparing…", comment: "Start in progress"))
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
@@ -209,7 +211,7 @@ struct ContentView: View {
                         Button {
                             model.startRecording()
                         } label: {
-                            Label("Enregistrer", systemImage: "record.circle")
+                            Label(NSLocalizedString("Record", comment: "Start recording button"), systemImage: "record.circle")
                                 .frame(minWidth: 126)
                         }
                         .buttonStyle(.borderedProminent)
@@ -218,7 +220,7 @@ struct ContentView: View {
                         .disabled(!model.canStart)
                     }
 
-                    Text(model.canStop ? "Le fichier sera finalisé à l'arrêt." : (model.isBusy ? "Veuillez patienter." : "Aucun démarrage automatique."))
+                    Text(recorderHint)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -245,7 +247,7 @@ struct ContentView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
-            .help("Masquer ce message")
+            .help(NSLocalizedString("Hide this message", comment: "Dismiss error tooltip"))
         }
         .padding(12)
         .background(
@@ -263,7 +265,7 @@ struct ContentView: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Dernier fichier enregistré")
+                Text(NSLocalizedString("Last recorded file", comment: "Last output file title"))
                     .font(.callout.weight(.semibold))
                 Text(url.lastPathComponent)
                     .font(.callout)
@@ -273,7 +275,7 @@ struct ContentView: View {
                     .textSelection(.enabled)
             }
             Spacer()
-            Button("Afficher dans le Finder") {
+            Button(NSLocalizedString("Show in Finder", comment: "Reveal last file button")) {
                 model.revealLastOutput()
             }
             .controlSize(.small)
@@ -285,26 +287,45 @@ struct ContentView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 5) {
             Label(
-                "Capture audio de l'application uniquement · aucun micro · aucune image · le son reste audible.",
+                NSLocalizedString(
+                    "Application audio only · no microphone · no images · sound stays audible.",
+                    comment: "Audio-only footer"
+                ),
                 systemImage: "speaker.wave.2"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Text("macOS peut demander l'autorisation d'enregistrer l'audio du système au premier démarrage. Aucune image n'est capturée, le son reste audible et aucune capture ne démarre avant votre clic.")
+            Text(NSLocalizedString(
+                "macOS may ask for permission to record system audio on first launch. No images are captured, sound stays audible, and no capture starts before your click.",
+                comment: "Audio-only authorization note"
+            ))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
+    private var recorderHint: String {
+        if model.canStop {
+            return NSLocalizedString("The file will be finalized when you stop.", comment: "Recorder hint while recording")
+        }
+        if model.isBusy {
+            return NSLocalizedString("Please wait.", comment: "Recorder hint while busy")
+        }
+        return NSLocalizedString("No automatic start.", comment: "Recorder hint at rest")
+    }
+
     private var recordingHeadline: String {
         if let application = model.selectedApplication {
             return model.phase.isRecording
-                ? "Enregistrement de \(application.name)"
+                ? String(
+                    format: NSLocalizedString("Recording %@", comment: "Recording headline with source name"),
+                    application.name
+                )
                 : application.name
         }
-        return "Aucune source sélectionnée"
+        return NSLocalizedString("No source selected", comment: "Recording headline without source")
     }
 
     private var statusDetail: String {
@@ -312,14 +333,32 @@ struct ContentView: View {
         case .idle:
             if let application = model.selectedApplication {
                 if !application.isRunning {
-                    return "\(application.name) n'est pas ouverte. Ouvrez-la pour enregistrer."
+                    return String(
+                        format: NSLocalizedString(
+                            "%@ is not open. Open it to record.",
+                            comment: "Idle status when source application is closed"
+                        ),
+                        application.name
+                    )
                 }
                 if model.outputFolder == nil {
-                    return "Choisissez un dossier de sortie pour \(application.name)."
+                    return String(
+                        format: NSLocalizedString(
+                            "Choose an output folder for %@.",
+                            comment: "Idle status without output folder"
+                        ),
+                        application.name
+                    )
                 }
-                return "Prêt à enregistrer l'audio de \(application.name)."
+                return String(
+                    format: NSLocalizedString(
+                        "Ready to record audio from %@.",
+                        comment: "Idle status ready to record"
+                    ),
+                    application.name
+                )
             }
-            return "Choisissez une application source."
+            return NSLocalizedString("Choose a source application.", comment: "Idle status without source")
         case let .failed(message):
             return message
         case .preparing, .recording, .stopping:
@@ -329,7 +368,7 @@ struct ContentView: View {
 
     private var folderDisplay: String {
         guard let folder = model.outputFolder else {
-            return "Aucun dossier choisi"
+            return NSLocalizedString("No folder chosen", comment: "Output folder placeholder")
         }
         return (folder.path as NSString).abbreviatingWithTildeInPath
     }

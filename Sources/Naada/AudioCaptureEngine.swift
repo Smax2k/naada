@@ -20,30 +20,75 @@ enum AudioCaptureEngineError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .sourceApplicationNotFound(name):
-            return "L'application « \(name) » n'expose plus de processus audio capturable. Relancez la sélection."
+            return String(
+                format: NSLocalizedString(
+                    "The application “%@” no longer exposes a capturable audio process. Please select it again.",
+                    comment: "Audio tap source application error"
+                ),
+                name
+            )
         case .unsupportedSystemVersion:
-            return "La capture audio par tap de processus nécessite macOS 14.2 ou ultérieur."
+            return NSLocalizedString(
+                "Process-tap audio capture requires macOS 14.2 or later.",
+                comment: "Audio tap minimum system version error"
+            )
         case let .invalidTapConfiguration(violations):
             let reasons = violations.map(\.rawValue).joined(separator: ", ")
-            return "La configuration du tap audio a été refusée (\(reasons))."
+            return String(
+                format: NSLocalizedString(
+                    "The audio tap configuration was rejected (%@).",
+                    comment: "Audio tap configuration error"
+                ),
+                reasons
+            )
         case let .tapCreationFailed(status):
-            return "Le tap audio de l'application n'a pas pu être créé (erreur \(status))."
+            return String(
+                format: NSLocalizedString(
+                    "The application's audio tap could not be created (error %d).",
+                    comment: "Audio tap creation error"
+                ),
+                status
+            )
         case let .aggregateCreationFailed(status):
-            return "L'agrégat audio privé n'a pas pu être créé (erreur \(status))."
+            return String(
+                format: NSLocalizedString(
+                    "The private audio aggregate could not be created (error %d).",
+                    comment: "Audio aggregate creation error"
+                ),
+                status
+            )
         case let .tapFormatUnavailable(status):
-            return "Le format audio du tap n'a pas pu être lu (erreur \(status))."
+            return String(
+                format: NSLocalizedString(
+                    "The tap's audio format could not be read (error %d).",
+                    comment: "Audio tap format error"
+                ),
+                status
+            )
         case let .ioProcCreationFailed(status):
-            return "L'écoute audio de l'agrégat n'a pas pu être créée (erreur \(status))."
+            return String(
+                format: NSLocalizedString(
+                    "The aggregate audio listener could not be created (error %d).",
+                    comment: "Audio IOProc creation error"
+                ),
+                status
+            )
         case let .captureStartFailed(status):
-            return "La capture audio n'a pas pu démarrer (erreur \(status))."
+            return String(
+                format: NSLocalizedString(
+                    "Audio capture could not start (error %d).",
+                    comment: "Audio capture start error"
+                ),
+                status
+            )
         case .notRecording:
-            return "Aucune capture n'est en cours."
+            return NSLocalizedString("No capture is in progress.", comment: "Audio engine not recording error")
         case .captureAlreadyRunning:
-            return "Une capture est déjà en cours dans ce moteur."
+            return NSLocalizedString("A capture is already running in this engine.", comment: "Audio engine already running error")
         case .audioConversionFailed:
-            return "Un échantillon audio n'a pas pu être converti en PCM."
+            return NSLocalizedString("An audio sample could not be converted to PCM.", comment: "Audio conversion error")
         case .missingWriter:
-            return "Le fichier MP3 de sortie n'est plus disponible."
+            return NSLocalizedString("The output MP3 file is no longer available.", comment: "Missing MP3 writer error")
         }
     }
 }
@@ -392,7 +437,13 @@ final class AudioCaptureEngine {
         var warning: String?
         let stopStatus = AudioDeviceStop(resources.aggregate, resources.ioProc)
         if stopStatus != noErr {
-            warning = "L'arrêt de l'agrégat audio a échoué (erreur \(stopStatus))."
+            warning = String(
+                format: NSLocalizedString(
+                    "Stopping the audio aggregate failed (error %d).",
+                    comment: "Audio aggregate stop warning"
+                ),
+                stopStatus
+            )
         }
 
         let ioProcStatus = AudioDeviceDestroyIOProcID(
@@ -400,17 +451,35 @@ final class AudioCaptureEngine {
             resources.ioProc
         )
         if ioProcStatus != noErr, warning == nil {
-            warning = "La libération de l'écoute audio a échoué (erreur \(ioProcStatus))."
+            warning = String(
+                format: NSLocalizedString(
+                    "Releasing the audio listener failed (error %d).",
+                    comment: "Audio IOProc release warning"
+                ),
+                ioProcStatus
+            )
         }
 
         let aggregateStatus = AudioHardwareDestroyAggregateDevice(resources.aggregate)
         if aggregateStatus != noErr, warning == nil {
-            warning = "La destruction de l'agrégat audio a échoué (erreur \(aggregateStatus))."
+            warning = String(
+                format: NSLocalizedString(
+                    "Destroying the audio aggregate failed (error %d).",
+                    comment: "Audio aggregate destruction warning"
+                ),
+                aggregateStatus
+            )
         }
 
         let tapStatus = AudioHardwareDestroyProcessTap(resources.tap)
         if tapStatus != noErr, warning == nil {
-            warning = "La destruction du tap audio a échoué (erreur \(tapStatus))."
+            warning = String(
+                format: NSLocalizedString(
+                    "Destroying the audio tap failed (error %d).",
+                    comment: "Audio tap destruction warning"
+                ),
+                tapStatus
+            )
         }
 
         // Laisse la file audio se vider, puis ferme le writer dans le même

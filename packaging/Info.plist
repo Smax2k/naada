@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>fr</string>
+	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>Naada</string>
 	<key>CFBundleExecutable</key>
@@ -35,8 +35,8 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Naada — encodeur MP3 Shine sous LGPL-2, voir CREDITS.md</string>
+	<string>Naada — MP3 encoder Shine under LGPL-2, see CREDITS.md</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Naada enregistre uniquement le son de l'application choisie dans un fichier MP3 : aucune image n'est capturée, le son reste audible et aucune capture ne démarre avant votre clic sur Enregistrer.</string>
+	<string>Naada records only the chosen application's audio to an MP3 file: no images are captured, sound stays audible, and no capture starts before your click on Record.</string>
 </dict>
 </plist>

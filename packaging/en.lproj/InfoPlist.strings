@@ -1,0 +1,4 @@
+/* English base Info.plist localization. */
+
+"NSAudioCaptureUsageDescription" = "Naada records only the chosen application's audio to an MP3 file: no images are captured, sound stays audible, and no capture starts before your click on Record.";
+"NSHumanReadableCopyright" = "Naada — MP3 encoder Shine under LGPL-2, see CREDITS.md";

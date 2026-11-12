@@ -113,6 +113,13 @@ public struct ProcessTapConstraintError: Error, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         let reasons = violations.map(\.rawValue).joined(separator: ", ")
-        return "Configuration de tap de processus refusée : \(reasons)."
+        return String(
+            format: NSLocalizedString(
+                "Process tap configuration rejected: %@.",
+                bundle: .main,
+                comment: "Process tap constraint violation list"
+            ),
+            reasons
+        )
     }
 }

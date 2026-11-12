@@ -31,21 +31,27 @@ struct PresetManagerView: View {
         .padding(16)
         .frame(width: 380)
         .confirmationDialog(
-            "Supprimer « \(presetPendingDeletion?.name ?? "") » ?",
+            String(
+                format: NSLocalizedString("Delete “%@”?", comment: "Preset deletion dialog title"),
+                presetPendingDeletion?.name ?? ""
+            ),
             isPresented: deletionPresented,
             titleVisibility: .visible
         ) {
-            Button("Supprimer", role: .destructive) {
+            Button(NSLocalizedString("Delete", comment: "Confirm preset deletion"), role: .destructive) {
                 if let preset = presetPendingDeletion {
                     model.deletePreset(id: preset.id)
                 }
                 presetPendingDeletion = nil
             }
-            Button("Annuler", role: .cancel) {
+            Button(NSLocalizedString("Cancel", comment: "Cancel preset deletion"), role: .cancel) {
                 presetPendingDeletion = nil
             }
         } message: {
-            Text("Le preset sera retiré. Les réglages courants et le dossier ne sont pas modifiés.")
+            Text(NSLocalizedString(
+                "The preset will be removed. Current settings and folder stay unchanged.",
+                comment: "Preset deletion message"
+            ))
         }
         .accessibilityIdentifier("presetManager")
     }
@@ -55,7 +61,7 @@ struct PresetManagerView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Presets")
                     .font(.headline)
-                Text("Source, titre et dossier en un clic.")
+                Text(NSLocalizedString("Source, title and folder in one click.", comment: "Preset manager subtitle"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -79,15 +85,18 @@ struct PresetManagerView: View {
                     .font(.system(size: 10, weight: .semibold))
             }
             .buttonStyle(.borderless)
-            .help("Fermer les presets")
+            .help(NSLocalizedString("Close presets", comment: "Close preset manager tooltip"))
         }
     }
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Aucun preset enregistré", systemImage: "bookmark.slash")
+            Label(NSLocalizedString("No saved presets", comment: "Empty preset state title"), systemImage: "bookmark.slash")
                 .font(.callout.weight(.semibold))
-            Text("Votre source, votre titre et votre dossier actuels restent inchangés. Créez un premier preset ci-dessous.")
+            Text(NSLocalizedString(
+                "Your current source, title and folder stay unchanged. Create a first preset below.",
+                comment: "Empty preset state explanation"
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -130,7 +139,9 @@ struct PresetManagerView: View {
                         .lineLimit(1)
 
                     Label(preset.source.name, systemImage: "app")
-                    Label(preset.title.isEmpty ? "Sans titre" : preset.title, systemImage: "textformat")
+                    Label(preset.title.isEmpty
+                        ? NSLocalizedString("Untitled", comment: "Preset without title")
+                        : preset.title, systemImage: "textformat")
                     Label(folderLabel(for: preset), systemImage: "folder")
                 }
                 .font(.caption)
@@ -141,28 +152,34 @@ struct PresetManagerView: View {
                 Spacer(minLength: 4)
 
                 VStack(alignment: .trailing, spacing: 5) {
-                    Button("Appliquer") {
+                    Button(NSLocalizedString("Apply", comment: "Apply preset button")) {
                         model.applyPreset(preset)
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .disabled(model.isBusy)
-                    .help("Remplacer la source, le titre et le dossier par ce preset")
+                    .help(NSLocalizedString(
+                        "Replace the source, title and folder with this preset",
+                        comment: "Apply preset tooltip"
+                    ))
 
                     Menu {
-                        Button("Renommer") {
+                        Button(NSLocalizedString("Rename", comment: "Rename preset action")) {
                             beginRename(preset)
                         }
 
-                        Button("Mettre à jour depuis la configuration actuelle") {
+                        Button(NSLocalizedString(
+                            "Update from current configuration",
+                            comment: "Update preset action"
+                        )) {
                             model.updatePreset(id: preset.id)
                         }
                         .disabled(!model.canSavePreset)
 
                         Divider()
 
-                        Button("Supprimer…", role: .destructive) {
+                        Button(NSLocalizedString("Delete…", comment: "Delete preset action"), role: .destructive) {
                             presetPendingDeletion = preset
                         }
                     } label: {
@@ -172,7 +189,10 @@ struct PresetManagerView: View {
                     .menuIndicator(.hidden)
                     .frame(width: 20)
                     .disabled(model.isBusy)
-                    .help("Renommer, mettre à jour ou supprimer ce preset")
+                    .help(NSLocalizedString(
+                        "Rename, update or delete this preset",
+                        comment: "Preset actions tooltip"
+                    ))
                 }
             }
             .padding(10)
@@ -181,21 +201,24 @@ struct PresetManagerView: View {
 
     private func renameRow(_ preset: RecordingPreset) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Renommer « \(preset.name) »")
+            Text(String(
+                format: NSLocalizedString("Rename “%@”", comment: "Rename preset title"),
+                preset.name
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                TextField("Nom du preset", text: $renameDraft)
+                TextField(NSLocalizedString("Preset name", comment: "Preset name placeholder"), text: $renameDraft)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { commitRename() }
 
-                Button("Enregistrer") {
+                Button(NSLocalizedString("Save", comment: "Save renamed preset")) {
                     commitRename()
                 }
                 .disabled(trimmedRenameDraft.isEmpty)
 
-                Button("Annuler") {
+                Button(NSLocalizedString("Cancel", comment: "Cancel preset rename")) {
                     cancelRename()
                 }
             }
@@ -205,26 +228,32 @@ struct PresetManagerView: View {
 
     private var creationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Créer depuis la configuration actuelle")
+            Text(NSLocalizedString("Create from current configuration", comment: "Preset creation section title"))
                 .font(.callout.weight(.semibold))
-            Text("Le preset mémorise la source sélectionnée, le titre et le dossier visibles dans la fenêtre principale.")
+            Text(NSLocalizedString(
+                "The preset remembers the selected source, title and folder shown in the main window.",
+                comment: "Preset creation explanation"
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                TextField("Nom du preset", text: $newPresetName)
+                TextField(NSLocalizedString("Preset name", comment: "Preset name placeholder"), text: $newPresetName)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { createPreset() }
 
-                Button("Créer") {
+                Button(NSLocalizedString("Create", comment: "Create preset button")) {
                     createPreset()
                 }
                 .disabled(trimmedNewPresetName.isEmpty || !model.canSavePreset)
             }
 
             if !model.canSavePreset {
-                Text("Choisissez d'abord une application source, hors enregistrement.")
+                Text(NSLocalizedString(
+                    "Choose a source application first, outside recording.",
+                    comment: "Preset creation requirement"
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -274,7 +303,7 @@ struct PresetManagerView: View {
 
     private func folderLabel(for preset: RecordingPreset) -> String {
         guard let path = preset.folderPath else {
-            return "Dossier actuel conservé"
+            return NSLocalizedString("Current folder kept", comment: "Preset keeping current output folder")
         }
         return (path as NSString).abbreviatingWithTildeInPath
     }

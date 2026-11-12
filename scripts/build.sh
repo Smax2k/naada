@@ -39,6 +39,15 @@ install -m 644 "$ROOT/packaging/Info.plist" "$APP/Contents/Info.plist"
 install -m 644 "$ROOT/vendor/shine/COPYING" "$APP/Contents/Resources/Shine-COPYING.txt"
 install -m 644 "$ROOT/CREDITS.md" "$APP/Contents/Resources/CREDITS.md"
 
+echo "→ Copie des localisations (en, fr)"
+for language in en fr; do
+    LANGUAGE_DIR="$APP/Contents/Resources/$language.lproj"
+    install -d "$LANGUAGE_DIR"
+    for table in Localizable.strings InfoPlist.strings; do
+        install -m 644 "$ROOT/packaging/$language.lproj/$table" "$LANGUAGE_DIR/$table"
+    done
+done
+
 echo "→ Compilation de l'icône (Icon Composer)"
 ICON_SRC="$ROOT/packaging/AppIcon.icon"
 if [[ ! -d "$ICON_SRC" ]]; then

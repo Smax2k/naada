@@ -51,7 +51,15 @@ public enum RecordingFileError: Error, LocalizedError {
         switch self {
         case let .cannotCreate(path, code):
             let reason = String(cString: strerror(code))
-            return "Impossible de créer « \(path) » : \(reason)."
+            return String(
+                format: NSLocalizedString(
+                    "Could not create “%@”: %@.",
+                    bundle: .main,
+                    comment: "Recording file creation error with path and reason"
+                ),
+                path,
+                reason
+            )
         }
     }
 }

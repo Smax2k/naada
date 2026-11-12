@@ -19,13 +19,19 @@ struct AudioLevelView: View {
     }
 
     private var stateLabel: String {
-        guard isActive else { return "Repos" }
-        return hasSignal ? "Son reçu" : "Silence"
+        guard isActive else { return NSLocalizedString("Idle", comment: "Audio level idle state") }
+        return hasSignal
+            ? NSLocalizedString("Sound received", comment: "Audio level receiving sound")
+            : NSLocalizedString("Silence", comment: "Audio level silent state")
     }
 
     private var stateDetail: String {
-        guard isActive else { return "Aucune capture en cours" }
-        guard hasSignal else { return "Aucun son détecté" }
+        guard isActive else {
+            return NSLocalizedString("No capture in progress", comment: "Audio level inactive detail")
+        }
+        guard hasSignal else {
+            return NSLocalizedString("No sound detected", comment: "Audio level silent detail")
+        }
         return "\(decibels) dB"
     }
 
@@ -36,9 +42,19 @@ struct AudioLevelView: View {
     }
 
     private var accessibilityValue: String {
-        guard isActive else { return "Repos, aucune capture en cours" }
-        guard hasSignal else { return "Silence, aucun son détecté" }
-        return "Son reçu, niveau \(decibels) décibels"
+        guard isActive else {
+            return NSLocalizedString("Idle, no capture in progress", comment: "Audio level accessibility idle value")
+        }
+        guard hasSignal else {
+            return NSLocalizedString("Silence, no sound detected", comment: "Audio level accessibility silent value")
+        }
+        return String(
+            format: NSLocalizedString(
+                "Sound received, level %lld decibels",
+                comment: "Audio level accessibility value with decibels"
+            ),
+            decibels
+        )
     }
 
     private var tint: Color {
@@ -87,11 +103,20 @@ struct AudioLevelView: View {
         )
         .accessibilityRepresentation {
             ProgressView(value: Double(fraction), total: 1) {
-                Text("Niveau du son capté : \(accessibilityValue)")
+                Text(String(
+                    format: NSLocalizedString(
+                        "Captured sound level: %@",
+                        comment: "Audio level accessibility label"
+                    ),
+                    accessibilityValue
+                ))
             }
         }
         .accessibilityHint(
-            "La jauge suit le son réel de l'application source pendant l'enregistrement."
+            NSLocalizedString(
+                "The meter follows the source application's actual sound during recording.",
+                comment: "Audio level accessibility hint"
+            )
         )
     }
 }

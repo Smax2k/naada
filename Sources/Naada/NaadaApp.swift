@@ -30,9 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Un enregistrement est en cours"
-        alert.informativeText = "Arrêtez l'enregistrement avant de quitter Naada, pour ne pas perdre la fin du fichier MP3."
-        alert.addButton(withTitle: "Revenir à Naada")
+        alert.messageText = NSLocalizedString("A recording is in progress", comment: "Quit guard alert title")
+        alert.informativeText = NSLocalizedString(
+            "Stop the recording before quitting Naada so the end of the MP3 file is not lost.",
+            comment: "Quit guard alert message"
+        )
+        alert.addButton(withTitle: NSLocalizedString("Return to Naada", comment: "Quit guard alert button"))
         alert.runModal()
         return .terminateCancel
     }

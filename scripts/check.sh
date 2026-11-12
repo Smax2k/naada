@@ -45,8 +45,8 @@ if [[ -z "$AUDIO_USAGE" ]]; then
     echo "Échec : NSAudioCaptureUsageDescription est absente ou vide." >&2
     exit 1
 fi
-if [[ "$AUDIO_USAGE" != *"aucune image"* || "$AUDIO_USAGE" != *"reste audible"* || "$AUDIO_USAGE" != *"avant votre clic"* ]]; then
-    echo "Échec : la description audio doit préciser aucune image, le son audible et le démarrage après clic." >&2
+if [[ "$AUDIO_USAGE" != *"no images"* || "$AUDIO_USAGE" != *"stays audible"* || "$AUDIO_USAGE" != *"before your click"* ]]; then
+    echo "Échec : la description audio anglaise doit préciser no images, stays audible et before your click." >&2
     exit 1
 fi
 
@@ -61,6 +61,111 @@ if plutil -extract NSScreenCaptureUsageDescription raw -o - Naada.app/Contents/I
     exit 1
 fi
 echo "✓ Aucun chemin d'enregistrement d'écran, tap privé non muet, autorisation audio et minimum 14.2"
+
+echo "→ Contrôles de la localisation en/fr"
+DEVELOPMENT_REGION="$(plutil -extract CFBundleDevelopmentRegion raw -o - Naada.app/Contents/Info.plist)"
+if [[ "$DEVELOPMENT_REGION" != "en" ]]; then
+    echo "Échec : CFBundleDevelopmentRegion doit valoir en (valeur : ${DEVELOPMENT_REGION:-absente})." >&2
+    exit 1
+fi
+
+for language in en fr; do
+    LANGUAGE_DIR="Naada.app/Contents/Resources/$language.lproj"
+    for table in Localizable.strings InfoPlist.strings; do
+        if [[ ! -f "$LANGUAGE_DIR/$table" ]]; then
+            echo "Échec : $language.lproj/$table absent du bundle." >&2
+            exit 1
+        fi
+    done
+done
+
+python3 - <<'PY'
+import json
+import subprocess
+import sys
+
+
+def fail(message):
+    print(f"Échec : {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load(path):
+    result = subprocess.run(
+        ["plutil", "-convert", "json", "-o", "-", path],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        fail(f"{path} illisible : {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+base_plist = load("Naada.app/Contents/Info.plist")
+if base_plist.get("CFBundleDevelopmentRegion") != "en":
+    fail("la région de développement du bundle n'est pas en")
+
+for table in ("Localizable.strings", "InfoPlist.strings"):
+    en = load(f"Naada.app/Contents/Resources/en.lproj/{table}")
+    fr = load(f"Naada.app/Contents/Resources/fr.lproj/{table}")
+    missing = sorted(set(en) - set(fr))
+    extra = sorted(set(fr) - set(en))
+    if missing:
+        fail(f"{table} : clés absentes du français : {missing}")
+    if extra:
+        fail(f"{table} : clés absentes de l'anglais : {extra}")
+    empty = sorted(key for key, value in {**en, **fr}.items() if not value)
+    if empty:
+        fail(f"{table} : traductions vides : {empty}")
+    if not en:
+        fail(f"{table} : table vide")
+
+en_plist = load("Naada.app/Contents/Resources/en.lproj/InfoPlist.strings")
+fr_plist = load("Naada.app/Contents/Resources/fr.lproj/InfoPlist.strings")
+if en_plist.get("NSAudioCaptureUsageDescription") != base_plist.get("NSAudioCaptureUsageDescription"):
+    fail("la description audio anglaise diffère du Info.plist de base")
+if en_plist.get("NSHumanReadableCopyright") != base_plist.get("NSHumanReadableCopyright"):
+    fail("le copyright anglais diffère du Info.plist de base")
+french_usage = fr_plist.get("NSAudioCaptureUsageDescription", "")
+for phrase in ("aucune image", "reste audible", "avant votre clic"):
+    if phrase not in french_usage:
+        fail(f"la description audio française ne contient pas « {phrase} »")
+
+print("✓ Localisations en/fr présentes, région en, clés et description audio paritaires")
+PY
+
+python3 - <<'PY'
+import pathlib
+import re
+import sys
+
+FRENCH_WORDS = re.compile(
+    r"\b(Aucun|Aucune|Choisir|Dossier|Enregistrer|Enregistrement|Arrêter|"
+    r"Supprimer|Annuler|Prêt|Préparation|Finalisation|Réunion|Renommer|"
+    r"Appliquer|Créer|Fermer|Masquer|Afficher|Impossible|Autorisation)\b"
+)
+FRENCH_ACCENTS = re.compile(r"[éèêàçùôîûœÉÈÊÀÇÙÔÎÛŒ]")
+
+problems = []
+for path in sorted(pathlib.Path("Sources").rglob("*.swift")):
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", "", text)
+    for match in re.finditer(r'"((?:[^"\\]|\\.)*)"', text):
+        literal = match.group(1)
+        if FRENCH_ACCENTS.search(literal) or FRENCH_WORDS.search(literal):
+            line = text.count("\n", 0, match.start()) + 1
+            problems.append(f"{path}:{line} : {literal}")
+
+if problems:
+    print(
+        "Échec : des textes visibles français subsistent hors localisation :\n"
+        + "\n".join(problems),
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+print("✓ Aucun texte visible français hors des fichiers de localisation")
+PY
 
 echo "→ Contrôles de l'artefact"
 test -x Naada.app/Contents/MacOS/Naada

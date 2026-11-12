@@ -40,28 +40,34 @@ enum RecorderPhase: Equatable {
     var label: String {
         switch self {
         case .idle:
-            return "Prêt"
+            return NSLocalizedString("Ready", comment: "Recorder phase label")
         case .preparing:
-            return "Préparation"
+            return NSLocalizedString("Preparing", comment: "Recorder phase label")
         case .recording:
-            return "Enregistrement"
+            return NSLocalizedString("Recording", comment: "Recorder phase label")
         case .stopping:
-            return "Finalisation"
+            return NSLocalizedString("Finalizing", comment: "Recorder phase label")
         case .failed:
-            return "Erreur"
+            return NSLocalizedString("Error", comment: "Recorder phase label")
         }
     }
 
     var detail: String {
         switch self {
         case .idle:
-            return "Choisissez une application et un dossier, puis démarrez."
+            return NSLocalizedString(
+                "Choose an application and a folder, then start.",
+                comment: "Recorder idle detail"
+            )
         case .preparing:
-            return "Connexion à la source audio…"
+            return NSLocalizedString("Connecting to the audio source…", comment: "Recorder preparing detail")
         case .recording:
-            return "Le son système reste audible pendant la capture."
+            return NSLocalizedString(
+                "System sound stays audible during capture.",
+                comment: "Recorder recording detail"
+            )
         case .stopping:
-            return "Écriture de la dernière frame MP3…"
+            return NSLocalizedString("Writing the last MP3 frame…", comment: "Recorder stopping detail")
         case let .failed(message):
             return message
         }
