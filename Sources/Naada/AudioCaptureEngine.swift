@@ -46,6 +46,10 @@ struct CaptureStopResult {
 final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     var onUnexpectedStop: ((Error, URL?) -> Void)?
     var onAudioError: ((Error) -> Void)?
+    /// Niveau RMS normalisé [0, 1], appelé sur la file audio au plus 10 fois
+    /// par seconde. Aucun envoi n'est planifié : seuls les échantillons réels
+    /// déclenchent une mesure.
+    var onAudioLevel: ((Float) -> Void)?
 
     private let audioQueue = DispatchQueue(
         label: "com.naada.audio-pipeline",
@@ -57,6 +61,11 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     private var writer: MP3FileWriter?
     private var converter: AudioSampleConverter?
     private var reportedAudioError = false
+    private var lastAudioLevelSentAt: TimeInterval = 0
+
+    /// Intervalle minimal entre deux mesures publiées : 10 envois par seconde
+    /// au plus, avant tout saut vers le MainActor.
+    private static let audioLevelInterval: TimeInterval = 0.1
 
     // Cycle de vie du flux : accès exclusivement sur lifecycleQueue.
     private var stream: SCStream?
@@ -137,6 +146,7 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
                 self.writer = writer
                 self.converter = AudioSampleConverter()
                 self.reportedAudioError = false
+                self.lastAudioLevelSentAt = 0
             }
 
             try await stream.startCapture()
@@ -186,6 +196,7 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             self.writer = nil
             self.converter = nil
             self.reportedAudioError = false
+            self.lastAudioLevelSentAt = 0
         }
     }
 
@@ -246,6 +257,7 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             self.writer = nil
             self.converter = nil
             self.reportedAudioError = false
+            self.lastAudioLevelSentAt = 0
         }
 
         if let finishError {
@@ -269,12 +281,25 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
 
         do {
             guard let samples = try converter.convert(sampleBuffer) else { return }
+            publishAudioLevel(for: samples)
             try writer.append(samples)
         } catch {
             guard !reportedAudioError else { return }
             reportedAudioError = true
             onAudioError?(error)
         }
+    }
+
+    /// Mesure et publie le niveau au plus 10 fois par seconde. Appelé
+    /// uniquement sur `audioQueue`, avec les échantillons PCM déjà convertis.
+    private func publishAudioLevel(for samples: [Int16]) {
+        guard let onAudioLevel else { return }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastAudioLevelSentAt >= Self.audioLevelInterval else { return }
+
+        lastAudioLevelSentAt = now
+        onAudioLevel(AudioLevel.normalizedRMS(samples))
     }
 
     // MARK: - SCStreamDelegate
@@ -300,6 +325,7 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             self.writer = nil
             self.converter = nil
             self.reportedAudioError = false
+            self.lastAudioLevelSentAt = 0
             self.onUnexpectedStop?(error, url)
         }
     }

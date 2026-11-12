@@ -30,6 +30,7 @@ final class RecorderViewModel: ObservableObject {
     @Published private(set) var session = RecordingSession()
     @Published private(set) var now = Date()
     @Published private(set) var lastOutputURL: URL?
+    @Published private(set) var audioLevel: Float = 0
     @Published var errorMessage: String?
 
     private static let outputFolderKey = "naada.outputFolderPath"
@@ -110,6 +111,7 @@ final class RecorderViewModel: ObservableObject {
 
         errorMessage = nil
         lastOutputURL = nil
+        resetAudioLevel()
         session.beginPreparation(at: Date.timeIntervalSinceReferenceDate)
 
         let token = UUID()
@@ -133,6 +135,11 @@ final class RecorderViewModel: ObservableObject {
                     self?.handleAudioError(error, token: token)
                 }
             }
+            engine.onAudioLevel = { [weak self] level in
+                Task { @MainActor in
+                    self?.handleAudioLevel(level, token: token)
+                }
+            }
             self.engine = engine
 
             Task {
@@ -150,6 +157,7 @@ final class RecorderViewModel: ObservableObject {
                             self.engine = nil
                         }
                         if sessionToken == token {
+                            resetAudioLevel()
                             sessionToken = nil
                         }
                         _ = try? await engine.stop()
@@ -158,6 +166,7 @@ final class RecorderViewModel: ObservableObject {
                     guard engine.isCaptureActive else {
                         let message = engine.startupStopMessage
                             ?? "La capture ne s'est pas stabilisée pendant le démarrage."
+                        resetAudioLevel()
                         sessionToken = nil
                         self.engine = nil
                         session.fail(
@@ -174,6 +183,7 @@ final class RecorderViewModel: ObservableObject {
                     startTicker()
                 } catch {
                     guard sessionToken == token else { return }
+                    resetAudioLevel()
                     sessionToken = nil
                     if self.engine === engine {
                         self.engine = nil
@@ -186,6 +196,7 @@ final class RecorderViewModel: ObservableObject {
                 }
             }
         } catch {
+            resetAudioLevel()
             sessionToken = nil
             session.fail(
                 error.localizedDescription,
@@ -198,6 +209,9 @@ final class RecorderViewModel: ObservableObject {
     func stopRecording() {
         guard session.state.isRecording, let engine else { return }
 
+        // Remise à zéro immédiate : la jauge ne doit pas rester figée sur la
+        // dernière mesure pendant la finalisation, ni après un arrêt en erreur.
+        resetAudioLevel()
         let token = sessionToken
         session.stopRequested(at: Date.timeIntervalSinceReferenceDate)
         now = Date()
@@ -285,6 +299,7 @@ final class RecorderViewModel: ObservableObject {
         guard sessionToken == token else { return }
         guard session.state.isRecording || session.state == .preparing else { return }
 
+        resetAudioLevel()
         sessionToken = nil
         session.fail(
             error.localizedDescription,
@@ -302,5 +317,16 @@ final class RecorderViewModel: ObservableObject {
         guard sessionToken == token, session.state.isRecording else { return }
         errorMessage = "Erreur d'écriture pendant la capture : \(error.localizedDescription)"
         stopRecording()
+    }
+
+    private func handleAudioLevel(_ level: Float, token: UUID) {
+        // Un callback déjà en file après l'arrêt ne doit jamais rallumer la
+        // jauge : le jeton et l'état « recording » filtrent ces mesures.
+        guard sessionToken == token, session.state.isRecording else { return }
+        audioLevel = min(1, max(0, level))
+    }
+
+    private func resetAudioLevel() {
+        audioLevel = 0
     }
 }

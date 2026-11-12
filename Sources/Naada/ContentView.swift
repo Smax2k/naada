@@ -128,68 +128,72 @@ struct ContentView: View {
     }
 
     private var recorderCard: some View {
-        HStack(alignment: .center, spacing: 20) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text(model.elapsedText)
-                    .font(.system(size: 46, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 20) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(model.elapsedText)
+                        .font(.system(size: 46, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
 
-                HStack(spacing: 8) {
-                    if model.phase.isRecording {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 9, height: 9)
-                    }
-                    Text(recordingHeadline)
-                        .font(.system(size: 14, weight: .semibold))
-                }
-
-                Text(statusDetail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 8) {
-                if model.canStop {
-                    Button {
-                        model.stopRecording()
-                    } label: {
-                        Label("Arrêter", systemImage: "stop.fill")
-                            .frame(minWidth: 126)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .controlSize(.large)
-                } else if model.isBusy {
                     HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(model.phase == .stopping ? "Finalisation…" : "Préparation…")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                        if model.phase.isRecording {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 9, height: 9)
+                        }
+                        Text(recordingHeadline)
+                            .font(.system(size: 14, weight: .semibold))
                     }
-                    .frame(minWidth: 126)
-                } else {
-                    Button {
-                        model.startRecording()
-                    } label: {
-                        Label("Enregistrer", systemImage: "record.circle")
-                            .frame(minWidth: 126)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .controlSize(.large)
-                    .disabled(!model.canStart)
+
+                    Text(statusDetail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text(model.canStop ? "Le fichier sera finalisé à l'arrêt." : (model.isBusy ? "Veuillez patienter." : "Aucun démarrage automatique."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 8) {
+                    if model.canStop {
+                        Button {
+                            model.stopRecording()
+                        } label: {
+                            Label("Arrêter", systemImage: "stop.fill")
+                                .frame(minWidth: 126)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                        .controlSize(.large)
+                    } else if model.isBusy {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(model.phase == .stopping ? "Finalisation…" : "Préparation…")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(minWidth: 126)
+                    } else {
+                        Button {
+                            model.startRecording()
+                        } label: {
+                            Label("Enregistrer", systemImage: "record.circle")
+                                .frame(minWidth: 126)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                        .controlSize(.large)
+                        .disabled(!model.canStart)
+                    }
+
+                    Text(model.canStop ? "Le fichier sera finalisé à l'arrêt." : (model.isBusy ? "Veuillez patienter." : "Aucun démarrage automatique."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+
+            AudioLevelView(level: model.audioLevel, isActive: model.phase.isRecording)
         }
         .padding(18)
         .background(cardBackground)
