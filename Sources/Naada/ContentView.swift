@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var model = RecorderViewModel.shared
+    private let settingActionWidth: CGFloat = 88
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -82,7 +83,7 @@ struct ContentView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 300)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .disabled(model.isBusy)
 
                     Button {
@@ -92,6 +93,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Actualiser la liste des applications ouvertes")
+                    .frame(width: settingActionWidth, alignment: .trailing)
                     .disabled(model.isBusy)
                 }
             }
@@ -99,7 +101,7 @@ struct ContentView: View {
             Divider().padding(.leading, 42)
 
             settingRow(icon: "folder", title: "Dossier de sortie") {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Text(folderDisplay)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -109,6 +111,7 @@ struct ContentView: View {
                     Button("Choisir…") {
                         model.chooseOutputFolder()
                     }
+                    .frame(width: settingActionWidth, alignment: .trailing)
                     .disabled(model.isBusy)
                 }
             }
@@ -118,7 +121,7 @@ struct ContentView: View {
             settingRow(icon: "textformat", title: "Titre de session") {
                 TextField("Réunion, cours, appel…", text: $model.sessionTitle)
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 300)
+                    .frame(maxWidth: .infinity)
                     .disabled(model.isBusy)
             }
         }
@@ -337,7 +340,9 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 132, alignment: .leading)
             content()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 11)
     }
 }
