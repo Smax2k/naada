@@ -82,7 +82,7 @@ struct ContentView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 300)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .disabled(model.isBusy)
 
                     Button {
@@ -118,7 +118,7 @@ struct ContentView: View {
             settingRow(icon: "textformat", title: "Titre de session") {
                 TextField("Réunion, cours, appel…", text: $model.sessionTitle)
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 300)
+                    .frame(maxWidth: .infinity)
                     .disabled(model.isBusy)
             }
         }
@@ -337,7 +337,9 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 132, alignment: .leading)
             content()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 11)
     }
 }
