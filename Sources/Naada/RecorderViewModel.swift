@@ -46,11 +46,13 @@ final class RecorderViewModel: ObservableObject {
     @Published private(set) var now = Date()
     @Published private(set) var lastOutputURL: URL?
     @Published private(set) var audioLevel: Float = 0
+    @Published private(set) var presets: [RecordingPreset] = []
     @Published var errorMessage: String?
 
     private static let outputFolderKey = SessionSettingsStore.outputFolderPathKey
 
     private let settings: SessionSettingsStore
+    private let presetStore: RecordingPresetStore
     private var isRestoringSettings = false
     private var ticker: Timer?
     private var engine: AudioCaptureEngine?
@@ -58,8 +60,13 @@ final class RecorderViewModel: ObservableObject {
     private var lastSuggestedTitle = ""
     private var workspaceObservers: [NSObjectProtocol] = []
 
-    init(settings: SessionSettingsStore = SessionSettingsStore()) {
+    init(
+        settings: SessionSettingsStore = SessionSettingsStore(),
+        presetStore: RecordingPresetStore = RecordingPresetStore(),
+        observesWorkspace: Bool = true
+    ) {
         self.settings = settings
+        self.presetStore = presetStore
         restoreOutputFolder()
 
         // La source et le titre restaurés sont posés avant la première liste
@@ -72,7 +79,13 @@ final class RecorderViewModel: ObservableObject {
         refreshApplications()
         isRestoringSettings = false
 
-        observeWorkspace()
+        // Une première utilisation n'écrit rien : la liste vide ne remplace ni
+        // la source, ni le titre, ni le dossier restaurés ci-dessus.
+        presets = presetStore.load()
+
+        if observesWorkspace {
+            observeWorkspace()
+        }
     }
 
     deinit {
@@ -119,6 +132,20 @@ final class RecorderViewModel: ObservableObject {
         session.state.isBusy
     }
 
+    /// Créer un preset exige une source sélectionnée. Le dossier reste
+    /// facultatif : sans lui, le preset n'effacera pas le dossier courant.
+    var canSavePreset: Bool {
+        !isBusy && selectedApplicationID != nil
+    }
+
+    var currentConfiguration: RecordingConfiguration {
+        RecordingConfiguration(
+            source: selectedApplicationID,
+            title: sessionTitle,
+            folderPath: outputFolder?.path
+        )
+    }
+
     func refreshApplications() {
         applications = RunningApplicationCatalog.list(
             remembering: selectedApplicationID
@@ -137,6 +164,80 @@ final class RecorderViewModel: ObservableObject {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         outputFolder = url
+    }
+
+    // MARK: - Presets
+
+    /// Enregistre la configuration courante sous un nom. Un dossier absent
+    /// reste absent du preset, sans jamais modifier le dossier hors preset.
+    @discardableResult
+    func createPreset(named name: String) -> RecordingPreset? {
+        guard canSavePreset,
+              let source = selectedApplicationID,
+              let preset = presetStore.create(
+                  name: name,
+                  source: source,
+                  title: sessionTitle,
+                  folderPath: outputFolder?.path
+              )
+        else {
+            return nil
+        }
+
+        presets = presetStore.load()
+        return preset
+    }
+
+    /// Applique un preset aux trois réglages visibles. Une source fermée
+    /// reste sélectionnée et visible ; aucun enregistrement ne démarre.
+    func applyPreset(_ preset: RecordingPreset) {
+        guard !isBusy else { return }
+
+        let applied = preset.applied(to: currentConfiguration)
+        selectedApplicationID = applied.source
+        refreshApplications()
+        sessionTitle = applied.title
+
+        if let folderPath = applied.folderPath,
+           folderPath != outputFolder?.path {
+            outputFolder = URL(fileURLWithPath: folderPath, isDirectory: true)
+        }
+    }
+
+    @discardableResult
+    func renamePreset(id: UUID, to name: String) -> Bool {
+        guard !isBusy, presetStore.rename(id: id, to: name) != nil else {
+            return false
+        }
+        presets = presetStore.load()
+        return true
+    }
+
+    /// Remplace les champs du preset par la configuration courante, en
+    /// conservant son nom et son identifiant.
+    @discardableResult
+    func updatePreset(id: UUID) -> Bool {
+        guard !isBusy,
+              let source = selectedApplicationID,
+              var updated = presets.first(where: { $0.id == id })
+        else {
+            return false
+        }
+
+        updated.source = source
+        updated.title = sessionTitle
+        updated.folderPath = outputFolder?.path
+
+        guard presetStore.update(updated) != nil else { return false }
+        presets = presetStore.load()
+        return true
+    }
+
+    @discardableResult
+    func deletePreset(id: UUID) -> Bool {
+        guard !isBusy, presetStore.delete(id: id) else { return false }
+        presets = presetStore.load()
+        return true
     }
 
     func startRecording() {

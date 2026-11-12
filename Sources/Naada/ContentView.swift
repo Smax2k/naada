@@ -2,8 +2,14 @@ import NaadaCore
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var model = RecorderViewModel.shared
+    @StateObject private var model: RecorderViewModel
+    @State private var isPresetManagerPresented = false
     private let settingActionWidth: CGFloat = 88
+
+    @MainActor
+    init(model: RecorderViewModel? = nil) {
+        _model = StateObject(wrappedValue: model ?? RecorderViewModel.shared)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -50,7 +56,10 @@ struct ContentView: View {
 
             Spacer()
 
-            statusPill
+            HStack(spacing: 8) {
+                statusPill
+                presetControl
+            }
         }
     }
 
@@ -69,6 +78,24 @@ struct ContentView: View {
                 .fill(statusColor.opacity(0.12))
         )
         .foregroundStyle(statusColor)
+        .accessibilityIdentifier("statusBadge")
+    }
+
+    private var presetControl: some View {
+        Button {
+            isPresetManagerPresented.toggle()
+        } label: {
+            Label("Presets", systemImage: "bookmark")
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(model.isBusy)
+        .help("Gérer les presets source, titre et dossier")
+        .accessibilityIdentifier("presetManagerButton")
+        .popover(isPresented: $isPresetManagerPresented, arrowEdge: .bottom) {
+            PresetManagerView(model: model)
+        }
     }
 
     private var settingsCard: some View {
