@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+TEAM_ID="BG55CF653X"
 
 ./scripts/test.sh
 ./scripts/build.sh release
@@ -11,6 +12,36 @@ echo "→ Contrôles de l'artefact"
 test -x Naada.app/Contents/MacOS/Naada
 plutil -lint Naada.app/Contents/Info.plist >/dev/null
 codesign --verify --strict Naada.app
+
+echo "→ Contrôles de la signature Developer ID"
+SIGNATURE_INFO="$(codesign -dv --verbose=4 Naada.app 2>&1)"
+if [[ "$SIGNATURE_INFO" != *"TeamIdentifier=$TEAM_ID"* ]]; then
+    echo "Échec : l'équipe $TEAM_ID est absente de la signature." >&2
+    exit 1
+fi
+if [[ "$SIGNATURE_INFO" != *"(runtime)"* ]]; then
+    echo "Échec : le runtime durci n'est pas activé dans la signature." >&2
+    exit 1
+fi
+if [[ "$SIGNATURE_INFO" != *"Timestamp="* ]]; then
+    echo "Échec : l'horodatage sécurisé est absent de la signature." >&2
+    exit 1
+fi
+
+REQUIREMENT="$(codesign -d -r- Naada.app 2>&1)"
+if ! grep -Fq 'identifier "com.naada.recorder"' <<< "$REQUIREMENT"; then
+    echo "Échec : l'exigence désignée ne porte pas l'identifiant du bundle." >&2
+    exit 1
+fi
+if ! grep -Fq "certificate leaf[subject.OU] = $TEAM_ID" <<< "$REQUIREMENT"; then
+    echo "Échec : l'exigence désignée ne porte pas l'équipe $TEAM_ID." >&2
+    exit 1
+fi
+if grep -Fq 'cdhash' <<< "$REQUIREMENT"; then
+    echo "Échec : l'exigence désignée dépend du CDHash (signature instable)." >&2
+    exit 1
+fi
+echo "✓ Signature Developer ID stable (équipe $TEAM_ID, runtime, horodatage ; pas de ticket notarié requis)"
 
 echo "→ Contrôles de l'icône"
 for icon_key in CFBundleIconFile CFBundleIconName; do

@@ -125,6 +125,9 @@ aucune dépendance externe à l'exécution.
 - La durée du MP3 dépend des buffers audio réellement fournis par le système ;
   le chronomètre, lui, mesure le temps réel de la session. La continuité
   audio/temps doit être vérifiée sur une vraie capture après la session.
-- La signature ad hoc change à chaque reconstruction : macOS peut redemander
-  l'autorisation d'enregistrement de l'écran après un nouveau build.
+- Un bundle signé ad hoc (hors `./scripts/build.sh`, qui utilise Developer ID)
+  change d'exigence désignée à chaque reconstruction : macOS peut alors
+  redemander l'autorisation d'enregistrement de l'écran. La signature Developer
+  ID garde l'identifiant et l'équipe stables, mais son runtime durci et son
+  horodatage ne valent pas notarisation.
 - Pas de reprise, pause, édition, tags ID3, planification ni envoi réseau.
