@@ -6,22 +6,28 @@
 |---|---|
 | `CShine` | Encodeur MP3 Shine (C), compilé statiquement dans le binaire. |
 | `NaadaCore` | Logique pure et testable : nommage, création exclusive, horloge, écrivain MP3. |
-| `Naada` | Application SwiftUI, catalogue des applications, capture ScreenCaptureKit. |
+| `Naada` | Application SwiftUI, catalogue des applications, capture audio par tap de processus Core Audio. |
 | `NaadaCoreTests` | Tests XCTest sans capture ni périphérique. |
 
 ## Capture
 
 ```text
-Application choisie
+Application choisie (SourceApplication.pid)
         │
         ▼
-SCShareableContent.excludingDesktopWindows
-        │  filtre : display + includingApplications([app]) + audio seul
+kAudioHardwarePropertyTranslatePIDToProcessObject
+        │  AudioObjectID du processus, et lui seul
         ▼
-SCStream(capturesAudio = true, sampleRate = 48 000, channelCount = 2)
-        │  aucune sortie écran ; excludesCurrentProcessAudio = true
+CATapDescription(stereoMixdownOfProcesses:)
+        │  tap privé, CATapUnmuted
         ▼
-CMSampleBuffer audio (souvent Float32 planaire)
+AudioHardwareCreateProcessTap → tap
+        │
+        ▼
+AudioHardwareCreateAggregateDevice
+        │  agrégat privé, kAudioAggregateDeviceTapListKey + kAudioSubTapUIDKey
+        ▼
+AudioDeviceCreateIOProcIDWithBlock → AudioBufferList (format du tap)
         │
         ▼
 AVAudioConverter → PCM 16 bits entrelacé 48 kHz
@@ -32,14 +38,21 @@ MP3FileWriter (Shine) → fichier créé en O_EXCL
 
 Pourquoi ce choix :
 
-- ScreenCaptureKit est l'API macOS prévue pour l'audio d'une application, sans
-  installer de pilote ni créer de tap de processus.
-- Aucun périphérique audio n'est ouvert ni modifié : la sortie système continue
-  normalement, le son reste audible.
-- Le filtre inclut une application précise, pas tout le système.
-- `excludesCurrentProcessAudio` évite une boucle avec Naada.
-- Aucun micro n'est demandé : `captureMicrophone` reste à sa valeur par défaut
-  (`false`) et aucune clé `NSMicrophoneUsageDescription` n'est déclarée.
+- le tap cible un unique `AudioObjectID` de processus, traduit depuis le PID
+  choisi ; aucun tap global et aucun ciblage par bundle ID ;
+- le tap est privé et non muet : le son continue d'aller vers la sortie
+  système, sans coupure ni redirection ;
+- l'agrégat est privé et n'est jamais défini comme sortie par défaut ; seule
+  son entrée est lue par l'IOProc, comme un microphone ;
+- aucun écran, aucune fenêtre et aucune image ne sont demandés : la permission
+  attendue est l'enregistrement de l'audio du système
+  (`NSAudioCaptureUsageDescription`), distincte de l'enregistrement de l'écran ;
+- aucun micro n'est demandé : aucune clé `NSMicrophoneUsageDescription` n'est
+  déclarée ;
+- la cible de déploiement reste 14.0 dans `Package.swift`, mais les API de tap
+  sont gardées par `#available(macOS 14.2, *)` ; `LSMinimumSystemVersion` vaut
+  14.2, donc 14.0–14.1 ne lance pas l'application et le moteur signale
+  explicitement l'indisponibilité.
 
 ## Machine d'état
 
@@ -54,9 +67,9 @@ idle ──click Enregistrer──▶ preparing ──startCapture OK──▶ r
                                                              idle
 ```
 
-- `preparing` : le fichier MP3 et le filtre sont créés ; l'autorisation système
-  peut apparaître ici.
-- `recording` : `startCapture` a réussi, le moteur est encore actif et aucun
+- `preparing` : le fichier MP3 et le tap de processus sont créés ; l'autorisation
+  système peut apparaître ici.
+- `recording` : `AudioDeviceStart` a réussi, le moteur est encore actif et aucun
   arrêt n'a été signalé ; le chronomètre démarre.
 - `stopping` : l'horloge est déjà figée ; le reliquat PCM est complété par du
   silence, la dernière frame est écrite, le fichier est synchronisé et fermé.
@@ -72,20 +85,25 @@ Deux files sérialisées, sans verrou bloquant depuis un contexte async :
 - **`audioQueue`** possède exclusivement `writer`, `converter` et
   `reportedAudioError`. Les callbacks d'échantillons y écrivent ; l'installation
   au démarrage, le drainage et la fermeture du MP3 y passent aussi.
-- **`lifecycleQueue`** possède `stream`, `isStarting`, `isStopping` et
-  l'erreur d'arrêt inattendu. Les transitions de démarrage, d'arrêt et le
-  delegate `didStopWithError` s'y sérialisent.
+- **`lifecycleQueue`** possède `tapID`, `aggregateID`, `ioProcID`, `isStarting`,
+  `isStopping` et l'erreur d'arrêt inattendu. Les transitions de démarrage et
+  d'arrêt s'y sérialisent.
 
-À l'arrêt, le moteur ne retire pas le writer avant de vider la file : il exécute
-le drainage des callbacks déjà en attente **et** `writer.finish()` dans le même
-bloc `audioQueue.sync`. Un arrêt inattendu fait de même via `audioQueue.async`,
-après les buffers déjà en file. Un démarrage qui échoue passe par la même file
-pour annuler le fichier, après avoir marqué le flux comme non démarrable.
+À l'arrêt, le moteur arrête et détruit l'IOProc, puis l'agrégat et le tap ; il
+exécute le drainage des callbacks déjà en attente **et** `writer.finish()` dans
+le même bloc `audioQueue.sync`. Un démarrage qui échoue détruit les mêmes
+ressources dans l'ordre inverse de leur création, puis annule le fichier après
+avoir marqué la capture comme non démarrable.
 
-La vue conserve un jeton de session : après `startCapture`, elle ne passe à
+La vue conserve un jeton de session : après `AudioDeviceStart`, elle ne passe à
 « Enregistrement » que si le moteur est encore actif, que le jeton est le sien
 et que l'état est toujours `preparing`. Un arrêt inattendu survenu pendant le
 démarrage ne peut donc pas être écrasé par l'état `recording`.
+
+Un IOProc Core Audio n'a pas de callback d'erreur : ce lot ne détecte pas la
+disparition de l'application source. Si elle quitte pendant la capture, le
+moteur peut écrire du silence jusqu'à l'arrêt ; `onUnexpectedStop` reste déclaré
+pour l'API, mais n'est pas alimenté par ce chemin.
 
 ## Nommage et fichiers
 
@@ -120,19 +138,33 @@ aucune dépendance externe à l'exécution.
 - La source Shine vendue produit deux avertissements de conversion d'entiers
   (`-Wshorten-64-to-32`) à la compilation ; le code n'a pas été modifié et les
   tests d'encodage/décodage passent.
-- Si l'application source n'a aucune fenêtre, ScreenCaptureKit peut ne rien
-  fournir ; l'interface liste les applications « régulières » ouvertes.
+- Si l'application source n'expose pas de processus audio (aucune lecture
+  audio depuis son lancement, ou processus déjà quitté), la traduction
+  PID → objet échoue et le démarrage est refusé avec un message ; aucun repli
+  global n'est tenté.
 - La durée du MP3 dépend des buffers audio réellement fournis par le système ;
   le chronomètre, lui, mesure le temps réel de la session. La continuité
   audio/temps doit être vérifiée sur une vraie capture après la session.
 - Un bundle signé ad hoc (hors `./scripts/build.sh`, qui utilise Developer ID)
   change d'exigence désignée à chaque reconstruction : macOS peut alors
-  redemander l'autorisation d'enregistrement de l'écran. La signature Developer
-  ID garde l'identifiant et l'équipe stables, mais son runtime durci et son
-  horodatage ne valent pas notarisation.
+  redemander l'autorisation d'enregistrer l'audio du système. La signature
+  Developer ID garde l'identifiant et l'équipe stables, mais son runtime durci et
+  son horodatage ne valent pas notarisation.
+- Un IOProc Core Audio n'a pas de callback d'erreur : si l'application source
+  quitte pendant la capture, le moteur n'en est pas notifié et peut écrire du
+  silence jusqu'à l'arrêt. `onUnexpectedStop` reste déclaré pour l'API, mais ce
+  lot ne l'alimente pas.
+- Le libellé exact de l'invite d'autorisation audio, son refus, la reprise, la
+  continuité du son et le contenu réellement capturé n'ont pas été observés :
+  aucun lancement ni capture n'ont été faits par l'agent.
 - Pas de reprise, pause, édition, tags ID3, planification ni envoi réseau.
 
 ## Autorisation audio seule : constat du 12 novembre 2026
+
+> **Constat historique.** Cette section décrit le chemin ScreenCaptureKit alors
+> en place et la voie recommandée. Elle est conservée telle quelle ; le lot du
+> 13 novembre 2026 l'a mise en œuvre (voir la section « Capture audio seule par
+> tap de processus » en fin de document).
 
 Constat établi sur macOS 27.2.1 (26B131), SDK macOS 27.2, sans build, sans
 lancement, sans capture et sans modification de TCC. Les preuves retenues sont
@@ -140,10 +172,10 @@ les pages Apple et les en-têtes du SDK ; aucun réglage système ni aucune case
 cochée n'est invoqué. Les pages ont été lues via leur représentation JSON Apple
 (le HTML est rendu en JavaScript).
 
-### Limite du chemin actuel
+### Limite du chemin ScreenCaptureKit (avant le 13 novembre 2026)
 
-Le chemin actuel reste ScreenCaptureKit, même si seule la sortie audio est
-consommée :
+Le chemin alors en place était ScreenCaptureKit, même si seule la sortie audio
+était consommée :
 
 - `SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)`
   (`Sources/Naada/AudioCaptureEngine.swift`) énumère les écrans, applications et
@@ -267,3 +299,84 @@ Aucun code n'est modifié dans ce lot ; les fichiers à changer sont :
 
 Cette recommandation repose sur les pages et en-têtes ci-dessus, pas sur un
 réglage système, une capture d'écran ou un essai runtime.
+
+### Suite donnée le 13 novembre 2026
+
+Le lot 1 a mis en œuvre cette voie dans `Sources/Naada/AudioCaptureEngine.swift` :
+traduction du PID choisi en objet processus, tap stéréo privé et non muet,
+agrégat privé portant `kAudioAggregateDeviceTapListKey` et `kAudioSubTapUIDKey`,
+puis lecture par IOProc et conversion vers le writer MP3 inchangé. L'invariant
+correspondant est isolé dans `Sources/NaadaCore/ProcessTapConstraints.swift` et
+testé. `packaging/Info.plist` déclare `NSAudioCaptureUsageDescription` et
+`LSMinimumSystemVersion` 14.2 ; `ScreenCaptureKit` n'est plus importé ni lié.
+
+## Capture audio seule par tap de processus — 13 novembre 2026
+
+Le chemin ScreenCaptureKit est remplacé par un tap de processus Core Audio.
+Aucune image, aucune fenêtre et aucun écran ne sont demandés.
+
+### Fonctionnement
+
+- `SourceApplication.pid` est traduit par
+  `kAudioHardwarePropertyTranslatePIDToProcessObject`. Un PID absent, inconnu du
+  HAL ou sans objet processus donne `sourceApplicationNotFound` ; aucun repli
+  global n'est tenté.
+- Le `CATapDescription` est construit en stéréo pour ce seul objet processus,
+  avec `isPrivate = true`, `isExclusive = false` et `muteBehavior = .unmuted`.
+- L'agrégat est privé, non empilé, et contient le tap via
+  `kAudioAggregateDeviceTapListKey` avec l'UUID du tap dans `kAudioSubTapUIDKey`.
+  Il n'est jamais défini comme périphérique de sortie par défaut.
+- Un `AudioDeviceIOProcID` lit l'entrée de l'agrégat sur `audioQueue`. Le format
+  est lu sur le tap (`kAudioTapPropertyFormat`) et converti par
+  `AVAudioConverter` vers PCM 16 bits entrelacé 48 kHz, puis écrit par
+  `MP3FileWriter`.
+- À l'arrêt ou après un démarrage échoué, l'IOProc est arrêté et détruit, puis
+  l'agrégat et le tap ; le writer est drainé et fermé. L'automate
+  `CaptureLifecycleState` ne revient à `idle` qu'après ces étapes, ce qui rend
+  le moteur réutilisable pour un démarrage suivant.
+- `ProcessTapConstraints` refuse en test un tap muet, non privé, ciblant
+  plusieurs processus, un bundle ID, la sortie par défaut ou le système entier.
+
+### Version et autorisation
+
+- `Package.swift` garde `.macOS(.v14)` et lie `CoreAudio` ; le code de tap est
+  sous `#available(macOS 14.2, *)` avec une erreur explicite sur 14.0–14.1.
+- `LSMinimumSystemVersion` vaut `14.2`, donc l'application ne se lance pas sur
+  14.0–14.1.
+- `NSAudioCaptureUsageDescription` remplace `NSScreenCaptureUsageDescription` :
+  « aucune image », « le son reste audible », « aucune capture ne démarre avant
+  votre clic ».
+- L'autorisation attendue est celle de l'audio du système, pas celle de
+  l'enregistrement de l'écran.
+
+### Preuves statiques du 13 novembre 2026
+
+Aucun lancement de Naada, aucune création de tap, aucune capture, aucun son et
+aucune action TCC n'ont été effectués. Les fichiers de ce lot ne sont pas
+commités.
+
+| Élément | Méthode | Résultat |
+|---|---|---|
+| Compilation et tests | `./scripts/check.sh` | exit 0, release compilée, **61 tests, 0 échec** |
+| Absence d'API écran | grep des symboles ScreenCaptureKit, SCStream, SCShareableContent et SCContentFilter dans `Sources` | aucun résultat ; `NSScreenCaptureUsageDescription` absent |
+| Absence de clé écran | `plutil -extract NSScreenCaptureUsageDescription raw Naada.app/Contents/Info.plist` | clé absente |
+| Autorisation audio | `plutil -extract NSAudioCaptureUsageDescription raw …` | clé présente, texte français attendu |
+| Version minimale | `plutil -extract LSMinimumSystemVersion raw …` | `14.2` |
+| Liaisons | `otool -L Naada.app/Contents/MacOS/Naada` | `CoreAudio.framework` présent, `ScreenCaptureKit.framework` absent |
+| Signature | `codesign --verify --strict` ; `codesign -dv --verbose=4` ; `codesign -d -r-` | OK ; équipe `BG55CF653X`, runtime durci, horodatage ; exigence identifiant + équipe, sans CDHash |
+| Installation | `/Applications/Naada.app` | non modifiée par ce lot |
+
+### Non observé / non corrigé
+
+- L'invite d'autorisation audio, son libellé exact, un refus, une reprise après
+  autorisation et la non-répétition de l'invite n'ont **pas** été observés.
+- Aucun tap n'a été créé à l'exécution : le contenu réellement capturé, le
+  format réel des buffers, la continuité du son pendant la capture et le
+  comportement à l'arrêt de l'application source ne sont **pas** vérifiés.
+- Le chemin 14.0–14.1 n'a pas été exécuté (machine en macOS 27.2.1) ; seule la
+  garde statique est vérifiée.
+- `onUnexpectedStop` reste dans l'API, mais aucun callback Core Audio ne
+  l'alimente : la disparition de la source n'est pas détectée et le moteur peut
+  enregistrer du silence jusqu'à l'arrêt.
+- Ces points ne sont ni prouvés ni corrigés par ce lot ; ils restent à vérifier
+  au runtime.

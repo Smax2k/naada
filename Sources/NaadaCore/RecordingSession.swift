@@ -21,7 +21,7 @@ public enum RecordingSessionState: Equatable, Sendable {
     }
 }
 
-/// Machine d'état pure d'une session. Elle ne connaît ni ScreenCaptureKit ni
+/// Machine d'état pure d'une session. Elle ne connaît ni le moteur audio ni
 /// le système de fichiers : elle peut donc être testée sans capture réelle.
 public struct RecordingSession: Equatable, Sendable {
     public private(set) var state: RecordingSessionState

@@ -8,6 +8,60 @@ TEAM_ID="BG55CF653X"
 ./scripts/test.sh
 ./scripts/build.sh release
 
+echo "→ Contrôles du chemin audio seul"
+FORBIDDEN_SCREEN_PATTERN='import ScreenCaptureKit|SCStream|SCShareableContent|SCContentFilter|NSScreenCaptureUsageDescription'
+if grep -REn "$FORBIDDEN_SCREEN_PATTERN" Sources packaging >/dev/null; then
+    echo "Échec : un symbole ou une clé d'enregistrement d'écran subsiste :" >&2
+    grep -REn "$FORBIDDEN_SCREEN_PATTERN" Sources packaging >&2
+    exit 1
+fi
+
+FORBIDDEN_TAP_PATTERN='CATapMuted|kAudioHardwarePropertyDefaultOutputDevice|muteBehavior *= *\.(muted|mutedWhenTapped)|isPrivate *= *false|isExclusive *= *true|usesBundleIdentifiers *= *true|targetsDefaultOutputDevice *= *true'
+if grep -REn "$FORBIDDEN_TAP_PATTERN" Sources >/dev/null; then
+    echo "Échec : un tap muet ou un changement de sortie par défaut subsiste :" >&2
+    grep -REn "$FORBIDDEN_TAP_PATTERN" Sources >&2
+    exit 1
+fi
+
+for required_symbol in \
+    kAudioHardwarePropertyTranslatePIDToProcessObject \
+    AudioHardwareCreateProcessTap \
+    kAudioAggregateDeviceTapListKey \
+    kAudioSubTapUIDKey \
+    kAudioTapPropertyFormat; do
+    if ! grep -Fq "$required_symbol" Sources/Naada/AudioCaptureEngine.swift; then
+        echo "Échec : le chemin de tap de processus n'utilise pas $required_symbol." >&2
+        exit 1
+    fi
+done
+
+if ! grep -Fq 'muteBehavior = .unmuted' Sources/Naada/AudioCaptureEngine.swift; then
+    echo "Échec : le tap doit rester explicitement non muet." >&2
+    exit 1
+fi
+
+AUDIO_USAGE="$(plutil -extract NSAudioCaptureUsageDescription raw -o - Naada.app/Contents/Info.plist)"
+if [[ -z "$AUDIO_USAGE" ]]; then
+    echo "Échec : NSAudioCaptureUsageDescription est absente ou vide." >&2
+    exit 1
+fi
+if [[ "$AUDIO_USAGE" != *"aucune image"* || "$AUDIO_USAGE" != *"reste audible"* || "$AUDIO_USAGE" != *"avant votre clic"* ]]; then
+    echo "Échec : la description audio doit préciser aucune image, le son audible et le démarrage après clic." >&2
+    exit 1
+fi
+
+MIN_MACOS="$(plutil -extract LSMinimumSystemVersion raw -o - Naada.app/Contents/Info.plist)"
+if [[ "$MIN_MACOS" != "14.2" ]]; then
+    echo "Échec : LSMinimumSystemVersion doit valoir 14.2 (valeur : ${MIN_MACOS:-absente})." >&2
+    exit 1
+fi
+
+if plutil -extract NSScreenCaptureUsageDescription raw -o - Naada.app/Contents/Info.plist >/dev/null 2>&1; then
+    echo "Échec : NSScreenCaptureUsageDescription est encore déclarée." >&2
+    exit 1
+fi
+echo "✓ Aucun chemin d'enregistrement d'écran, tap privé non muet, autorisation audio et minimum 14.2"
+
 echo "→ Contrôles de l'artefact"
 test -x Naada.app/Contents/MacOS/Naada
 plutil -lint Naada.app/Contents/Info.plist >/dev/null
@@ -154,4 +208,14 @@ if otool -L Naada.app/Contents/MacOS/Naada | grep -qiE '/(opt/homebrew|usr/local
     exit 1
 fi
 
-echo "✓ Tests, bundle, signature et liaisons système vérifiés"
+if otool -L Naada.app/Contents/MacOS/Naada | grep -q 'ScreenCaptureKit.framework'; then
+    echo "Échec : le binaire lie encore ScreenCaptureKit." >&2
+    exit 1
+fi
+
+if ! otool -L Naada.app/Contents/MacOS/Naada | grep -q 'CoreAudio.framework'; then
+    echo "Échec : le binaire ne lie pas CoreAudio." >&2
+    exit 1
+fi
+
+echo "✓ Tests, bundle, signature, chemin audio seul et liaisons système vérifiés"

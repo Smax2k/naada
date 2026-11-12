@@ -285,13 +285,13 @@ struct ContentView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 5) {
             Label(
-                "Capture audio de l'application uniquement · aucun micro · le son système reste audible.",
+                "Capture audio de l'application uniquement · aucun micro · aucune image · le son reste audible.",
                 systemImage: "speaker.wave.2"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Text("macOS peut demander l'autorisation « Enregistrement de l'écran » au premier démarrage, même si Naada ne capture aucune image. Aucune capture ne démarre avant votre clic.")
+            Text("macOS peut demander l'autorisation d'enregistrer l'audio du système au premier démarrage. Aucune image n'est capturée, le son reste audible et aucune capture ne démarre avant votre clic.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

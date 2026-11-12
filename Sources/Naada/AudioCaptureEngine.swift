@@ -1,12 +1,17 @@
 import AVFoundation
-import CoreMedia
+import CoreAudio
 import Foundation
 import NaadaCore
-import ScreenCaptureKit
 
 enum AudioCaptureEngineError: Error, LocalizedError {
     case sourceApplicationNotFound(String)
-    case noDisplayAvailable
+    case unsupportedSystemVersion
+    case invalidTapConfiguration([ProcessTapConstraints.Violation])
+    case tapCreationFailed(OSStatus)
+    case aggregateCreationFailed(OSStatus)
+    case tapFormatUnavailable(OSStatus)
+    case ioProcCreationFailed(OSStatus)
+    case captureStartFailed(OSStatus)
     case notRecording
     case captureAlreadyRunning
     case audioConversionFailed
@@ -15,9 +20,22 @@ enum AudioCaptureEngineError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .sourceApplicationNotFound(name):
-            return "L'application « \(name) » n'est plus visible pour la capture. Relancez la sélection."
-        case .noDisplayAvailable:
-            return "Aucun écran disponible pour rattacher la capture audio."
+            return "L'application « \(name) » n'expose plus de processus audio capturable. Relancez la sélection."
+        case .unsupportedSystemVersion:
+            return "La capture audio par tap de processus nécessite macOS 14.2 ou ultérieur."
+        case let .invalidTapConfiguration(violations):
+            let reasons = violations.map(\.rawValue).joined(separator: ", ")
+            return "La configuration du tap audio a été refusée (\(reasons))."
+        case let .tapCreationFailed(status):
+            return "Le tap audio de l'application n'a pas pu être créé (erreur \(status))."
+        case let .aggregateCreationFailed(status):
+            return "L'agrégat audio privé n'a pas pu être créé (erreur \(status))."
+        case let .tapFormatUnavailable(status):
+            return "Le format audio du tap n'a pas pu être lu (erreur \(status))."
+        case let .ioProcCreationFailed(status):
+            return "L'écoute audio de l'agrégat n'a pas pu être créée (erreur \(status))."
+        case let .captureStartFailed(status):
+            return "La capture audio n'a pas pu démarrer (erreur \(status))."
         case .notRecording:
             return "Aucune capture n'est en cours."
         case .captureAlreadyRunning:
@@ -35,15 +53,18 @@ struct CaptureStopResult {
     let warning: String?
 }
 
-/// Capture l'audio d'une seule application avec ScreenCaptureKit.
+/// Capture l'audio d'une seule application avec un tap de processus Core Audio.
 ///
 /// Choix de conception :
-/// - aucun tap de processus Core Audio, aucun périphérique audio ouvert ;
-/// - `capturesAudio` seul, sans sortie écran ajoutée ;
-/// - `excludesCurrentProcessAudio` évite de capturer Naada lui-même ;
-/// - ScreenCaptureKit est passif : le son continue d'aller vers la sortie
-///   système, sans coupure ni redirection.
-final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
+/// - un unique `AudioObjectID` de processus, obtenu depuis le PID choisi, est
+///   ciblé ; aucun tap global, aucun ciblage par bundle ID ;
+/// - le tap est privé et `CATapUnmuted` : le son continue d'aller vers la
+///   sortie système, sans coupure ni redirection ;
+/// - l'agrégat qui porte le tap est privé et n'est jamais défini comme sortie
+///   par défaut ; seule son entrée est lue par un IOProc, comme un micro ;
+/// - aucun écran, aucune fenêtre et aucune image ne sont demandés ;
+/// - le pipeline MP3, la conversion et la jauge restent inchangés.
+final class AudioCaptureEngine {
     var onUnexpectedStop: ((Error, URL?) -> Void)?
     var onAudioError: ((Error) -> Void)?
     /// Niveau RMS normalisé [0, 1], appelé sur la file audio au plus 10 fois
@@ -67,19 +88,21 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     /// au plus, avant tout saut vers le MainActor.
     private static let audioLevelInterval: TimeInterval = 0.1
 
-    // Cycle de vie du flux : accès exclusivement sur lifecycleQueue.
-    private var stream: SCStream?
-    private var isStarting = false
-    private var isStopping = false
+    // Cycle de vie du tap : accès exclusivement sur lifecycleQueue.
+    private var tapID: AudioObjectID?
+    private var aggregateID: AudioObjectID?
+    private var ioProcID: AudioDeviceIOProcID?
+    private var lifecycle = CaptureLifecycleState()
     private var unexpectedStopError: Error?
 
     func start(application: SourceApplication, writer: MP3FileWriter) async throws {
         let canStart = lifecycleQueue.sync { () -> Bool in
-            let available = stream == nil && !isStarting && !isStopping
-            if available {
-                isStarting = true
-            }
-            return available
+            let available = tapID == nil
+                && aggregateID == nil
+                && ioProcID == nil
+            guard available, lifecycle.beginStart() else { return false }
+            unexpectedStopError = nil
+            return true
         }
 
         guard canStart else {
@@ -88,82 +111,110 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
         }
 
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: false
-            )
-
-            guard let runningApplication = content.applications.first(where: {
-                $0.processID == application.pid
-            }) else {
+            guard #available(macOS 14.2, *) else {
+                throw AudioCaptureEngineError.unsupportedSystemVersion
+            }
+            guard let pid = application.pid else {
                 throw AudioCaptureEngineError.sourceApplicationNotFound(application.name)
             }
 
-            let applicationWindows = content.windows.filter {
-                $0.owningApplication?.processID == application.pid
-            }
-            let display = content.displays.first(where: { display in
-                applicationWindows.contains { $0.frame.intersects(display.frame) }
-            }) ?? content.displays.first
-
-            guard let display else {
-                throw AudioCaptureEngineError.noDisplayAvailable
-            }
-
-            let filter = SCContentFilter(
-                display: display,
-                including: [runningApplication],
-                exceptingWindows: []
+            let processObjectID = try Self.translatePID(
+                pid,
+                applicationName: application.name
+            )
+            let constraints = ProcessTapConstraints.processOnly(
+                processObjectID: processObjectID
             )
 
-            let configuration = SCStreamConfiguration()
-            configuration.capturesAudio = true
-            configuration.excludesCurrentProcessAudio = true
-            configuration.sampleRate = MP3FileWriter.sampleRate
-            configuration.channelCount = MP3FileWriter.channelCount
-            configuration.width = 1280
-            configuration.height = 720
-            configuration.queueDepth = 3
-            configuration.showsCursor = false
-            configuration.streamName = "Naada — \(application.name)"
+            do {
+                try constraints.validate()
+            } catch let error as ProcessTapConstraintError {
+                throw AudioCaptureEngineError.invalidTapConfiguration(error.violations)
+            }
 
-            let stream = SCStream(
-                filter: filter,
-                configuration: configuration,
-                delegate: self
+            let tapDescription = CATapDescription(
+                stereoMixdownOfProcesses: constraints.processObjectIDs
             )
-            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+            tapDescription.uuid = UUID()
+            tapDescription.name = "Naada — \(application.name)"
+            tapDescription.isPrivate = constraints.isPrivate
+            tapDescription.isExclusive = constraints.isExclusive
+            tapDescription.muteBehavior = .unmuted
 
+            var tapID = AudioObjectID(kAudioObjectUnknown)
+            let tapStatus = AudioHardwareCreateProcessTap(tapDescription, &tapID)
+            guard tapStatus == noErr, tapID != AudioObjectID(kAudioObjectUnknown) else {
+                throw AudioCaptureEngineError.tapCreationFailed(tapStatus)
+            }
             lifecycleQueue.sync {
-                self.stream = stream
-                self.isStopping = false
-                self.unexpectedStopError = nil
+                self.tapID = tapID
             }
+
+            let tapFormat = try Self.readTapFormat(tapID)
+
+            let tapEntry: [String: Any] = [
+                kAudioSubTapUIDKey: tapDescription.uuid.uuidString
+            ]
+            let aggregateDescription: [String: Any] = [
+                kAudioAggregateDeviceNameKey: "Naada — \(application.name)",
+                kAudioAggregateDeviceUIDKey: UUID().uuidString,
+                kAudioAggregateDeviceIsPrivateKey: true,
+                kAudioAggregateDeviceIsStackedKey: false,
+                kAudioAggregateDeviceTapListKey: [tapEntry],
+            ]
+
+            var aggregateID = AudioObjectID(kAudioObjectUnknown)
+            let aggregateStatus = AudioHardwareCreateAggregateDevice(
+                aggregateDescription as CFDictionary,
+                &aggregateID
+            )
+            guard
+                aggregateStatus == noErr,
+                aggregateID != AudioObjectID(kAudioObjectUnknown)
+            else {
+                throw AudioCaptureEngineError.aggregateCreationFailed(aggregateStatus)
+            }
+            lifecycleQueue.sync { self.aggregateID = aggregateID }
+
+            let converter = try AudioSampleConverter(streamDescription: tapFormat)
+
+            var ioProcID: AudioDeviceIOProcID?
+            let ioProcStatus = AudioDeviceCreateIOProcIDWithBlock(
+                &ioProcID,
+                aggregateID,
+                audioQueue
+            ) { [weak self] _, inputData, _, _, _ in
+                guard let self else { return }
+                self.handleAudioInput(inputData)
+            }
+            guard ioProcStatus == noErr, let ioProcID else {
+                throw AudioCaptureEngineError.ioProcCreationFailed(ioProcStatus)
+            }
+            lifecycleQueue.sync { self.ioProcID = ioProcID }
 
             // Le writer et le convertisseur sont installés avant le démarrage
             // effectif, mais uniquement sur la file audio sérialisée.
             audioQueue.sync {
                 self.writer = writer
-                self.converter = AudioSampleConverter()
+                self.converter = converter
                 self.reportedAudioError = false
                 self.lastAudioLevelSentAt = 0
             }
 
-            try await stream.startCapture()
-
-            let (startupError, stopped) = lifecycleQueue.sync { () -> (Error?, Bool) in
-                let result = (unexpectedStopError, isStopping)
-                if result.0 == nil && !result.1 {
-                    isStarting = false
-                }
-                return result
+            let startStatus = AudioDeviceStart(aggregateID, ioProcID)
+            guard startStatus == noErr else {
+                throw AudioCaptureEngineError.captureStartFailed(startStatus)
             }
 
+            let startupError: Error? = lifecycleQueue.sync {
+                guard lifecycle.isStarting, unexpectedStopError == nil else {
+                    return unexpectedStopError ?? AudioCaptureEngineError.notRecording
+                }
+                lifecycle.markCaptureStarted()
+                return nil
+            }
             if let startupError {
                 throw startupError
-            }
-            if stopped {
-                throw AudioCaptureEngineError.notRecording
             }
         } catch {
             await teardownFailedStart(writer: writer)
@@ -171,20 +222,82 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    /// Traduit le PID choisi en objet processus Core Audio. Le HAL ne renvoie
+    /// pas d'erreur pour un PID sans processus audio : il rend
+    /// `kAudioObjectUnknown`, traité ici comme une source indisponible.
+    private static func translatePID(
+        _ pid: pid_t,
+        applicationName: String
+    ) throws -> AudioObjectID {
+        var pidValue = pid
+        var processObjectID = AudioObjectID(kAudioObjectUnknown)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            UInt32(MemoryLayout<pid_t>.size),
+            &pidValue,
+            &size,
+            &processObjectID
+        )
+
+        guard
+            status == noErr,
+            processObjectID != AudioObjectID(kAudioObjectUnknown),
+            size == UInt32(MemoryLayout<AudioObjectID>.size)
+        else {
+            throw AudioCaptureEngineError.sourceApplicationNotFound(applicationName)
+        }
+
+        return processObjectID
+    }
+
+    /// Lit le format des données que le tap expose à l'agrégat. Ce format est
+    /// interprété par `AudioSampleConverter` dans le callback de l'IOProc.
+    @available(macOS 14.2, *)
+    private static func readTapFormat(
+        _ tapID: AudioObjectID
+    ) throws -> AudioStreamBasicDescription {
+        var format = AudioStreamBasicDescription()
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+
+        let status = AudioObjectGetPropertyData(
+            tapID,
+            &address,
+            0,
+            nil,
+            &size,
+            &format
+        )
+
+        guard
+            status == noErr,
+            size == UInt32(MemoryLayout<AudioStreamBasicDescription>.size),
+            format.mSampleRate > 0,
+            format.mChannelsPerFrame > 0
+        else {
+            throw AudioCaptureEngineError.tapFormatUnavailable(status)
+        }
+
+        return format
+    }
+
     /// Arrêt d'un démarrage qui n'a jamais abouti. Tout passe par audioQueue
     /// pour laisser les callbacks déjà en file se terminer avant de fermer.
     private func teardownFailedStart(writer: MP3FileWriter) async {
-        let currentStream: SCStream? = lifecycleQueue.sync {
-            let current = stream
-            self.stream = nil
-            self.isStarting = false
-            self.isStopping = true
-            return current
-        }
-
-        if let currentStream {
-            try? await currentStream.stopCapture()
-            try? currentStream.removeStreamOutput(self, type: .audio)
+        if #available(macOS 14.2, *) {
+            destroyCaptureResources()
         }
 
         audioQueue.sync {
@@ -198,13 +311,47 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             self.reportedAudioError = false
             self.lastAudioLevelSentAt = 0
         }
+
+        // Le teardown n'est terminé qu'après la libération des ressources et
+        // le drainage du writer : l'automate redevient alors réutilisable.
+        lifecycleQueue.sync {
+            lifecycle.finishTeardown()
+        }
     }
 
-    /// Vérification synchrone utilisée par la vue après `startCapture`.
-    /// Empêche de proclamer « enregistrement » si le flux s'est déjà arrêté.
+    /// Détruit l'IOProc, l'agrégat puis le tap, dans cet ordre. Les erreurs
+    /// sont ignorées : un démarrage échoué ne doit pas masquer sa cause.
+    @available(macOS 14.2, *)
+    private func destroyCaptureResources() {
+        let resources: (
+            ioProc: AudioDeviceIOProcID?,
+            aggregate: AudioObjectID?,
+            tap: AudioObjectID?
+        ) = lifecycleQueue.sync {
+            let current = (ioProcID, aggregateID, tapID)
+            self.ioProcID = nil
+            self.aggregateID = nil
+            self.tapID = nil
+            return current
+        }
+
+        if let ioProc = resources.ioProc, let aggregate = resources.aggregate {
+            _ = AudioDeviceStop(aggregate, ioProc)
+            _ = AudioDeviceDestroyIOProcID(aggregate, ioProc)
+        }
+        if let aggregate = resources.aggregate {
+            _ = AudioHardwareDestroyAggregateDevice(aggregate)
+        }
+        if let tap = resources.tap {
+            _ = AudioHardwareDestroyProcessTap(tap)
+        }
+    }
+
+    /// Vérification synchrone utilisée par la vue après le démarrage.
+    /// Empêche de proclamer « enregistrement » si la capture s'est déjà arrêtée.
     var isCaptureActive: Bool {
         lifecycleQueue.sync {
-            stream != nil && !isStarting && !isStopping && unexpectedStopError == nil
+            lifecycle.isCaptureActive && unexpectedStopError == nil
         }
     }
 
@@ -215,30 +362,55 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stop() async throws -> CaptureStopResult {
-        let stream: SCStream? = lifecycleQueue.sync {
-            guard let current = self.stream, !isStarting, !isStopping else { return nil }
-            self.stream = nil
-            isStopping = true
-            return current
+        guard #available(macOS 14.2, *) else {
+            throw AudioCaptureEngineError.unsupportedSystemVersion
         }
 
-        guard let stream else {
+        let resources: (
+            ioProc: AudioDeviceIOProcID,
+            aggregate: AudioObjectID,
+            tap: AudioObjectID
+        )? = lifecycleQueue.sync {
+            guard
+                let ioProc = ioProcID,
+                let aggregate = aggregateID,
+                let tap = tapID,
+                lifecycle.beginStop()
+            else {
+                return nil
+            }
+            self.ioProcID = nil
+            self.aggregateID = nil
+            self.tapID = nil
+            return (ioProc, aggregate, tap)
+        }
+
+        guard let resources else {
             throw AudioCaptureEngineError.notRecording
         }
 
         var warning: String?
-        do {
-            try await stream.stopCapture()
-        } catch {
-            warning = error.localizedDescription
+        let stopStatus = AudioDeviceStop(resources.aggregate, resources.ioProc)
+        if stopStatus != noErr {
+            warning = "L'arrêt de l'agrégat audio a échoué (erreur \(stopStatus))."
         }
 
-        do {
-            try stream.removeStreamOutput(self, type: .audio)
-        } catch {
-            if warning == nil {
-                warning = error.localizedDescription
-            }
+        let ioProcStatus = AudioDeviceDestroyIOProcID(
+            resources.aggregate,
+            resources.ioProc
+        )
+        if ioProcStatus != noErr, warning == nil {
+            warning = "La libération de l'écoute audio a échoué (erreur \(ioProcStatus))."
+        }
+
+        let aggregateStatus = AudioHardwareDestroyAggregateDevice(resources.aggregate)
+        if aggregateStatus != noErr, warning == nil {
+            warning = "La destruction de l'agrégat audio a échoué (erreur \(aggregateStatus))."
+        }
+
+        let tapStatus = AudioHardwareDestroyProcessTap(resources.tap)
+        if tapStatus != noErr, warning == nil {
+            warning = "La destruction du tap audio a échoué (erreur \(tapStatus))."
         }
 
         // Laisse la file audio se vider, puis ferme le writer dans le même
@@ -260,6 +432,12 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             self.lastAudioLevelSentAt = 0
         }
 
+        // Resources détruites et writer drainé : le moteur peut être réutilisé
+        // même si la fermeture du MP3 signale ensuite une erreur.
+        lifecycleQueue.sync {
+            lifecycle.finishTeardown()
+        }
+
         if let finishError {
             throw finishError
         }
@@ -269,18 +447,15 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
         return CaptureStopResult(url: outputURL, warning: warning)
     }
 
-    // MARK: - SCStreamOutput
+    // MARK: - IOProc
 
-    func stream(
-        _ stream: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of type: SCStreamOutputType
-    ) {
-        guard type == .audio, sampleBuffer.isValid else { return }
+    /// Appelé par AudioDevice sur `audioQueue`, avec les données d'entrée de
+    /// l'agrégat. Tout l'état du pipeline est déjà confiné à cette file.
+    private func handleAudioInput(_ bufferList: UnsafePointer<AudioBufferList>) {
         guard let writer, let converter else { return }
 
         do {
-            guard let samples = try converter.convert(sampleBuffer) else { return }
+            guard let samples = try converter.convert(bufferList) else { return }
             publishAudioLevel(for: samples)
             try writer.append(samples)
         } catch {
@@ -301,97 +476,119 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
         lastAudioLevelSentAt = now
         onAudioLevel(AudioLevel.normalizedRMS(samples))
     }
-
-    // MARK: - SCStreamDelegate
-
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        let shouldHandle = lifecycleQueue.sync { () -> Bool in
-            guard !isStopping, let current = self.stream, current === stream else {
-                return false
-            }
-            self.stream = nil
-            isStopping = true
-            isStarting = false
-            unexpectedStopError = error
-            return true
-        }
-        guard shouldHandle else { return }
-
-        // Exécuté après les callbacks déjà en file : on vide puis on ferme
-        // le writer sur la même file sérialisée.
-        audioQueue.async { [self] in
-            let writer = self.writer
-            let url = try? writer?.finish()
-            self.writer = nil
-            self.converter = nil
-            self.reportedAudioError = false
-            self.lastAudioLevelSentAt = 0
-            self.onUnexpectedStop?(error, url)
-        }
-    }
 }
 
-/// Convertit les échantillons ScreenCaptureKit (souvent Float32 planaire)
-/// en PCM 16 bits entrelacé, au format attendu par l'encodeur MP3.
+/// Convertit les échantillons du tap (souvent Float32 planaire) en PCM 16 bits
+/// entrelacé, au format attendu par l'encodeur MP3.
 private final class AudioSampleConverter {
-    private let targetFormat = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
-        sampleRate: Double(MP3FileWriter.sampleRate),
-        channels: AVAudioChannelCount(MP3FileWriter.channelCount),
-        interleaved: true
-    )!
+    private let sourceFormat: AVAudioFormat
+    private let targetFormat: AVAudioFormat
+    private let converter: AVAudioConverter
+    private let bytesPerSample: Int
+    private let sourceBytesPerFrame: Int
 
-    private var converter: AVAudioConverter?
-    private var sourceFormat: AVAudioFormat?
+    init(streamDescription: AudioStreamBasicDescription) throws {
+        var description = streamDescription
 
-    func convert(_ sampleBuffer: CMSampleBuffer) throws -> [Int16]? {
         guard
-            let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
-            let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription),
-            let format = AVAudioFormat(streamDescription: streamDescription)
+            description.mSampleRate > 0,
+            description.mChannelsPerFrame > 0,
+            description.mBitsPerChannel > 0,
+            let sourceFormat = AVAudioFormat(streamDescription: &description),
+            let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: Double(MP3FileWriter.sampleRate),
+                channels: AVAudioChannelCount(MP3FileWriter.channelCount),
+                interleaved: true
+            ),
+            let converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
         else {
             throw AudioCaptureEngineError.audioConversionFailed
         }
 
-        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        let sourceASBD = sourceFormat.streamDescription.pointee
+        let sampleWidth = max(1, Int(sourceASBD.mBitsPerChannel / 8))
+        let declaredFrameWidth = Int(sourceASBD.mBytesPerFrame)
+
+        self.sourceFormat = sourceFormat
+        self.targetFormat = targetFormat
+        self.converter = converter
+        self.bytesPerSample = sampleWidth
+        self.sourceBytesPerFrame = sourceFormat.isInterleaved
+            ? (declaredFrameWidth > 0
+                ? declaredFrameWidth
+                : Int(sourceASBD.mChannelsPerFrame) * sampleWidth)
+            : sampleWidth
+    }
+
+    func convert(_ bufferList: UnsafePointer<AudioBufferList>) throws -> [Int16]? {
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: bufferList)
+        )
+        guard !sourceBuffers.isEmpty, sourceBytesPerFrame > 0 else { return nil }
+
+        let frameCount = sourceBuffers
+            .map { Int($0.mDataByteSize) / sourceBytesPerFrame }
+            .min() ?? 0
         guard frameCount > 0 else { return nil }
 
-        if converter == nil || sourceFormat != format {
-            converter = AVAudioConverter(from: format, to: targetFormat)
-            sourceFormat = format
-        }
-        guard let converter else {
-            throw AudioCaptureEngineError.audioConversionFailed
-        }
-
-        guard
-            let input = AVAudioPCMBuffer(
-                pcmFormat: format,
-                frameCapacity: AVAudioFrameCount(frameCount)
-            )
-        else {
+        guard let input = AVAudioPCMBuffer(
+            pcmFormat: sourceFormat,
+            frameCapacity: AVAudioFrameCount(frameCount)
+        ) else {
             throw AudioCaptureEngineError.audioConversionFailed
         }
         input.frameLength = AVAudioFrameCount(frameCount)
 
-        let copyStatus = CMSampleBufferCopyPCMDataIntoAudioBufferList(
-            sampleBuffer,
-            at: 0,
-            frameCount: Int32(frameCount),
-            into: input.mutableAudioBufferList
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(
+            input.mutableAudioBufferList
         )
-        guard copyStatus == noErr else {
-            throw AudioCaptureEngineError.audioConversionFailed
+        if sourceFormat.isInterleaved {
+            guard
+                let source = sourceBuffers.first,
+                let sourceData = source.mData,
+                let destination = destinationBuffers.first,
+                let destinationData = destination.mData
+            else {
+                throw AudioCaptureEngineError.audioConversionFailed
+            }
+            let byteCount = min(
+                Int(source.mDataByteSize),
+                Int(destination.mDataByteSize)
+            )
+            destinationData.copyMemory(
+                from: UnsafeRawPointer(sourceData),
+                byteCount: byteCount
+            )
+        } else {
+            let channelCount = min(sourceBuffers.count, destinationBuffers.count)
+            guard channelCount > 0 else {
+                throw AudioCaptureEngineError.audioConversionFailed
+            }
+            for channel in 0..<channelCount {
+                guard
+                    let sourceData = sourceBuffers[channel].mData,
+                    let destinationData = destinationBuffers[channel].mData
+                else {
+                    throw AudioCaptureEngineError.audioConversionFailed
+                }
+                let byteCount = min(
+                    Int(sourceBuffers[channel].mDataByteSize),
+                    Int(destinationBuffers[channel].mDataByteSize)
+                )
+                destinationData.copyMemory(
+                    from: UnsafeRawPointer(sourceData),
+                    byteCount: byteCount
+                )
+            }
         }
 
-        let ratio = targetFormat.sampleRate / format.sampleRate
+        let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
         let capacity = AVAudioFrameCount(Double(frameCount) * ratio) + 64
-        guard
-            let output = AVAudioPCMBuffer(
-                pcmFormat: targetFormat,
-                frameCapacity: capacity
-            )
-        else {
+        guard let output = AVAudioPCMBuffer(
+            pcmFormat: targetFormat,
+            frameCapacity: capacity
+        ) else {
             throw AudioCaptureEngineError.audioConversionFailed
         }
 

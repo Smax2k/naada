@@ -1,6 +1,6 @@
 # Vérification
 
-État au **2026-11-12**. La session d'enregistrement de la personne qui utilise la
+État au **2026-11-13**. La session d'enregistrement de la personne qui utilise la
 machine est **terminée** (confirmé par Jonathan). Ce document sépare :
 
 - la **passe UI historique** du 2026-11-12, faite sur un bundle isolé construit
@@ -13,6 +13,9 @@ machine est **terminée** (confirmé par Jonathan). Ce document sépare :
   stable pour TCC, sans lancement ni capture ;
 - la **vérification d'identité TCC** du 2026-11-12 (lot 1) : signature, processus
   installé et journaux `tccd`, sans lancement ni capture ;
+- la **vérification statique du chemin audio seul** du 2026-11-13 (lot 1) :
+  tap de processus Core Audio, absence d'API écran, bundle et signature, sans
+  lancement, capture ni action TCC ;
 - ce qui reste **non observé**.
 
 Aucune capture n'a été démarrée ni arrêtée par les agents, aucun son n'a été
@@ -251,6 +254,12 @@ fonctionnement général de l'enregistrement, pas ces détails :
 10. **Collision** `Titre (2).mp3` avec le même titre : non exercée.
 11. **Quitter pendant une capture** : non exercé.
 12. **Accessibilité** clavier : non exercée.
+13. **Autorisation d'enregistrer l'audio du système** : le libellé de l'invite,
+    un refus, une reprise après autorisation et la non-répétition ne sont pas
+    observés.
+14. **Capture par tap de processus** : aucun tap n'a été créé à l'exécution ; le
+    contenu réellement capturé, le format des buffers, la continuité du son et
+    l'arrêt de l'application source ne sont pas vérifiés.
 
 ## Commandes de vérification autorisées maintenant
 
@@ -261,13 +270,19 @@ cd /Volumes/NVME1To/Projets/naada
 ```
 
 `scripts/check.sh` ne lance pas l'application, n'appelle pas ScreenCaptureKit
-et n'ouvre aucun périphérique audio.
+et n'ouvre aucun périphérique audio ; il échoue si un symbole ou une clé
+d'enregistrement d'écran réapparaît.
 
 Dernière exécution de la vague : **2026-11-12** sur `7f50042` —
 `./scripts/check.sh` : compilation release OK, **27 tests, 0 échec**, artefacts
 d'icône contrôlés, application installée signée Developer ID et rejetée par
 Gatekeeper. Aucun lancement de l'application installée. La passe UI historique
 ci-dessus a été faite sur un bundle isolé, pas sur ce build.
+
+Exécution du **2026-11-13** (lot 1, état de travail non commité sur `0a1e9f5`) :
+`./scripts/check.sh` exit 0, **61 tests, 0 échec**, chemin audio seul contrôlé,
+signature Developer ID stable. Aucun lancement, aucune capture, aucune action
+TCC. Voir la section datée en fin de document.
 
 ## Test manuel proposé à Jonathan (non exécuté par l'agent)
 
@@ -290,10 +305,51 @@ L'agent n'a pas déclenché ce test.
 - Pas de `Enregistrer` ni d'`Arrêter` cliqué par les agents.
 - Pas d'invite d'autorisation acceptée ni de refus provoqué par les agents.
 - Pas de `SCStream.startCapture` déclenché par les agents.
-- Pas de tap Core Audio, pas de mute, pas de changement de volume ou de routage.
+- Pas de tap Core Audio créé à l'exécution, pas de mute, pas de changement de
+  volume ou de routage.
 - Pas de son provoqué, coupé, muté ou rerouté.
 - Pas de lecture du MP3, ni avec QuickTime, ni avec Musique, ni avec `afplay`.
 - Pas de suppression ni de modification du fichier produit par Jonathan.
 - Pas de lancement de l'application installée dans `/Applications`.
 - Pas de notarisation ni de publication.
 - Le bundle partagé `Naada.app` n'a pas été lancé ni supprimé.
+
+## Vérification statique du chemin audio seul du 2026-11-13 (lot 1)
+
+Mesures de l'agent : `./scripts/check.sh` reconstruit et signe le bundle du
+dépôt, puis lit les sources, l'`Info.plist` et le binaire. Aucun lancement de
+Naada, aucune création de tap, aucune capture, aucun son et aucune action TCC.
+Les fichiers du lot ne sont pas commités. `/Applications/Naada.app` n'a reçu
+aucune commande d'installation et n'a pas été modifiée par ce lot.
+
+| Élément | Méthode | Résultat observé |
+|---|---|---|
+| Compilation et tests | `./scripts/check.sh` | exit 0 ; release compilée ; **61 tests, 0 échec** |
+| Invariants du tap | 10 tests `ProcessTapConstraintsTests` | tap muet, muet à la première lecture, non privé, ciblage bundle ID, sortie par défaut, système entier, liste vide ou multiple : tous rejetés |
+| Cycle de vie | 6 tests `CaptureLifecycleStateTests` | arrêt et échec ne redeviennent `idle` qu'après teardown ; cycles répétés démarrables, sans audio |
+| Cible Core Audio | `grep` dans `AudioCaptureEngine.swift` | `kAudioHardwarePropertyTranslatePIDToProcessObject`, `AudioHardwareCreateProcessTap`, `kAudioAggregateDeviceTapListKey`, `kAudioSubTapUIDKey`, `kAudioTapPropertyFormat` présents ; `muteBehavior = .unmuted` présent |
+| Absence d'écran | grep des symboles ScreenCaptureKit, SCStream, SCShareableContent et SCContentFilter dans `Sources` | aucun résultat ; `NSScreenCaptureUsageDescription` absent des sources et du bundle |
+| Liaisons | `otool -L Naada.app/Contents/MacOS/Naada` | `CoreAudio.framework` présent ; `ScreenCaptureKit.framework` absent |
+| Autorisation audio | `plutil -extract NSAudioCaptureUsageDescription raw -o - Naada.app/Contents/Info.plist` | clé présente ; texte « aucune image », « le son reste audible », « avant votre clic » |
+| Version minimale | `plutil -extract LSMinimumSystemVersion raw -o - Naada.app/Contents/Info.plist` | `14.2` |
+| Signature | `codesign --verify --strict Naada.app` | exit 0 |
+| Identité | `codesign -dv --verbose=4 Naada.app` | `TeamIdentifier=BG55CF653X`, runtime durci, horodatage sécurisé |
+| Exigence désignée | `codesign -d -r- Naada.app` | identifiant `com.naada.recorder` + équipe `BG55CF653X`, sans CDHash |
+| Processus | `pgrep -x Naada` avant chaque build | aucun processus (exit 1) ; aucune application lancée par l'agent |
+
+### Ce qui est prouvé, et ce qui ne l'est pas
+
+Prouvé statiquement : le code ne dépend plus de ScreenCaptureKit, le tap vise un
+unique objet processus, il est privé et non muet, l'agrégat est privé, aucune
+sortie par défaut n'est définie, la clé d'autorisation est celle de l'audio du
+système et le minimum est 14.2. La compilation, les tests et la signature
+passent.
+
+Non prouvé à cette date : le libellé et le comportement de l'invite TCC audio,
+un refus puis une reprise, la non-répétition de l'invite, le contenu réellement
+capturé, le format réel des buffers, la continuité du son pendant la capture,
+l'arrêt de l'application source, l'exécution sur macOS 14.0–14.1 et tout appel
+à `onUnexpectedStop`. Aucun de ces points n'a été simulé ni corrigé par ce lot.
+
+La signature est vérifiée ; l'installation reste à la charge du lead après
+intégration.

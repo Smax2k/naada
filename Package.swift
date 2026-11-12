@@ -28,9 +28,8 @@ let package = Package(
             dependencies: ["NaadaCore", "CShine"],
             path: "Sources/Naada",
             linkerSettings: [
-                .linkedFramework("ScreenCaptureKit"),
+                .linkedFramework("CoreAudio"),
                 .linkedFramework("AVFoundation"),
-                .linkedFramework("CoreMedia"),
                 .linkedFramework("AppKit")
             ]
         ),

@@ -31,12 +31,12 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>14.2</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Naada — encodeur MP3 Shine sous LGPL-2, voir CREDITS.md</string>
-	<key>NSScreenCaptureUsageDescription</key>
-	<string>Naada capture uniquement l'audio de l'application choisie pour produire un fichier MP3. Aucune image n'est enregistrée et le son système reste audible.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Naada enregistre uniquement le son de l'application choisie dans un fichier MP3 : aucune image n'est capturée, le son reste audible et aucune capture ne démarre avant votre clic sur Enregistrer.</string>
 </dict>
 </plist>
