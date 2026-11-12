@@ -16,12 +16,20 @@ cd /Volumes/NVME1To/Projets/naada
 open ./Naada.app
 ```
 
-Le bundle produit par `./scripts/build.sh` est signé ad hoc (`codesign --sign -`).
-L'application installée dans `/Applications` par la vague de vérification est
-signée `Developer ID Application: Jonathan Bahu (BG55CF653X)`, mais elle n'est
-**ni notarisée ni publiée** : Gatekeeper la rejette (`Unnotarized Developer ID`)
-et elle n'a pas été lancée. Les deux signatures sont distinctes ; les détails
-sont dans [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+Le bundle produit par `./scripts/build.sh` est signé
+`Developer ID Application: Jonathan Bahu (BG55CF653X)` (équipe `BG55CF653X`),
+avec runtime durci et horodatage sécurisé. L'exigence désignée s'appuie sur
+l'identifiant `com.naada.recorder` et l'équipe, pas sur le CDHash : une
+reconstruction garde donc la même exigence de code. L'instabilité ad hoc du
+CDHash est observée en copie isolée ; elle peut expliquer des redemandes TCC,
+sans que la cause soit établie pour le bundle installé, dont l'exigence était
+déjà stable. Le comportement de TCC lui-même n'a pas été observé. La signature
+n'est **ni notarisée ni publiée** : Gatekeeper peut refuser le lancement
+(`Unnotarized Developer ID`). Le certificat est obligatoire ; sans lui,
+`./scripts/build.sh` s'arrête avec un message explicite sans produire de bundle.
+L'application installée dans `/Applications` par la vague précédente n'a pas été
+remplacée ; son état est consigné dans
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
 La première capture réelle peut déclencher l'autorisation macOS « Enregistrement
 de l'écran » : ScreenCaptureKit sert aussi à capter l'audio d'une application.

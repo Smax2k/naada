@@ -9,6 +9,8 @@ machine est **terminée** (confirmé par Jonathan). Ce document sépare :
   l'enregistrement en général ;
 - la **vague de vérification** du 2026-11-12 sur `7f50042` : alignement, jauge,
   icône, build et installation ;
+- la **vérification de signature** du 2026-11-12 (lot 3) : identité Developer ID
+  stable pour TCC, sans lancement ni capture ;
 - ce qui reste **non observé**.
 
 Aucune capture n'a été démarrée ni arrêtée par les agents, aucun son n'a été
@@ -89,6 +91,39 @@ eu lieu pendant cette vague.
 | Signature | `codesign --verify --strict` (revérifié par le lead) | OK ; Authority `Developer ID Application: Jonathan Bahu (BG55CF653X)`, Team `BG55CF653X`, CDHash `988b633361631ddab11c24cbc5ca05e97a989f6b`, flags `0` sans runtime, timestamp `none` |
 | Gatekeeper | `spctl` | exit 3, `rejected`, source `Unnotarized Developer ID` |
 | Notarisation et publication | — | aucune |
+
+## Vérification de signature du 2026-11-12 (lot 3)
+
+Constats de l'agent en lecture seule sur les bundles réels ; aucun lancement
+d'application, aucune capture et aucune invite de permission.
+
+| Élément | Méthode | Résultat observé par l'agent |
+|---|---|---|
+| Identité disponible | `security find-identity -v -p codesigning` | `Developer ID Application: Jonathan Bahu (BG55CF653X)` présente |
+| Bundle du dépôt | `codesign -dv --verbose=4 Naada.app` | ad hoc, `TeamIdentifier` absent, exigence désignée `cdhash H"069b49c1…"` |
+| Bundle installé | `codesign -dv --verbose=4 /Applications/Naada.app` | Developer ID, Team `BG55CF653X`, flags `0` sans runtime, pas de `Timestamp`, CDHash `988b6333…`, exigence stable (identifiant + équipe) |
+| Instabilité ad hoc | deux builds isolés du même `HEAD` | CDHash `6d785e67…` et `f078c6c2…` ; les exigences désignées sont ces CDHash, donc différentes |
+| Stabilité Developer ID | ces deux builds signés Developer ID + runtime + horodatage | CDHash `131fbba0…` et `e6024dbf…` ; exigence désignée identique (identifiant + `BG55CF653X`) |
+| Build et tests | `./scripts/test.sh` puis `./scripts/check.sh` en copie isolée | exit 0, **27 tests, 0 échec** ; signature Team `BG55CF653X`, runtime, horodatage ; exigence sans CDHash |
+| Rebuild indépendant | `./scripts/build.sh release` dans une autre copie | CDHash `7c25a29b…`, même exigence désignée |
+| Certificat absent | copie du script avec une identité factice | exit 1 avant compilation, message explicite, aucun bundle |
+| Point d'appel TCC | lecture seule de `Sources` | `SCShareableContent` uniquement dans `AudioCaptureEngine.start` (ligne 91), atteint par le seul bouton **Enregistrer** (`ContentView` → `startRecording`) ; aucun appel au lancement |
+
+`./scripts/build.sh` signe désormais avec Developer ID, `--options runtime` et
+`--timestamp` ; `./scripts/check.sh` contrôle l'équipe, le runtime, l'horodatage
+et l'absence de CDHash dans l'exigence, sans exiger de ticket de notarisation.
+Aucune entitlement n'a été ajoutée : la signature avec runtime durci et
+horodatage réussit sans elle ; le comportement à l'exécution n'a pas été lancé.
+
+La stabilité de l'identité de signature ne prouve pas le comportement de TCC :
+aucune invite n'a été observée par l'agent. Selon l'attestation de Jonathan
+(utilisateur, non observée par l'agent), l'application apparaissait cochée dans
+les autorisations, une nouvelle demande est survenue, puis un texte système a
+évoqué un refus du protocole TCC. Aucune action de refus de l'invite par
+Jonathan n'est attestée. Le texte affiché vient du système via
+`error.localizedDescription` (`Sources/Naada/RecorderViewModel.swift`) ;
+aucun message d'erreur TCC n'est écrit en dur dans le dépôt. La capture
+correspondante n'a pas été observée.
 
 ## Prouvé avant la passe UI, sans capture (historique `dba658c`)
 
