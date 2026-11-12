@@ -30,6 +30,32 @@ install -m 644 "$ROOT/packaging/Info.plist" "$APP/Contents/Info.plist"
 install -m 644 "$ROOT/vendor/shine/COPYING" "$APP/Contents/Resources/Shine-COPYING.txt"
 install -m 644 "$ROOT/CREDITS.md" "$APP/Contents/Resources/CREDITS.md"
 
+echo "→ Compilation de l'icône (Icon Composer)"
+ICON_SRC="$ROOT/packaging/AppIcon.icon"
+if [[ ! -d "$ICON_SRC" ]]; then
+    echo "Source d'icône introuvable : $ICON_SRC" >&2
+    exit 1
+fi
+MIN_MACOS="$(plutil -extract LSMinimumSystemVersion raw -o - "$ROOT/packaging/Info.plist")"
+ICON_PARTIAL="$APP/Contents/Resources/AppIcon-partial.plist"
+xcrun actool "$ICON_SRC" \
+    --compile "$APP/Contents/Resources" \
+    --platform macosx \
+    --minimum-deployment-target "$MIN_MACOS" \
+    --app-icon AppIcon \
+    --standalone-icon-behavior all \
+    --output-partial-info-plist "$ICON_PARTIAL" \
+    --warnings --errors --notices \
+    --output-format human-readable-text
+rm -f "$ICON_PARTIAL"
+
+for icon_output in Assets.car AppIcon.icns; do
+    if [[ ! -f "$APP/Contents/Resources/$icon_output" ]]; then
+        echo "Icône compilée introuvable : $icon_output" >&2
+        exit 1
+    fi
+done
+
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 # Signature ad hoc locale : aucune identité de développeur, aucun accès réseau.

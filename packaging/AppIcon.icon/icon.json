@@ -1,0 +1,43 @@
+{
+  "fill" : "none",
+  "groups" : [
+    {
+      "blur-material" : 0,
+      "layers" : [
+        {
+          "glass" : false,
+          "hidden-specializations" : [
+            { "value" : false },
+            { "appearance" : "dark", "value" : true }
+          ],
+          "image-name" : "naada-light-full.png",
+          "name" : "light"
+        },
+        {
+          "glass" : false,
+          "hidden-specializations" : [
+            { "value" : true },
+            { "appearance" : "dark", "value" : false }
+          ],
+          "image-name" : "naada-dark-full.png",
+          "name" : "dark"
+        }
+      ],
+      "lighting" : "individual",
+      "name" : "Resonance",
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [ "watchOS" ],
+    "squares" : "shared"
+  }
+}
