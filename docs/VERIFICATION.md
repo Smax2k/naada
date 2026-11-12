@@ -11,6 +11,8 @@ machine est **terminée** (confirmé par Jonathan). Ce document sépare :
   icône, build et installation ;
 - la **vérification de signature** du 2026-11-12 (lot 3) : identité Developer ID
   stable pour TCC, sans lancement ni capture ;
+- la **vérification d'identité TCC** du 2026-11-12 (lot 1) : signature, processus
+  installé et journaux `tccd`, sans lancement ni capture ;
 - ce qui reste **non observé**.
 
 Aucune capture n'a été démarrée ni arrêtée par les agents, aucun son n'a été
@@ -125,6 +127,77 @@ Jonathan n'est attestée. Le texte affiché vient du système via
 aucun message d'erreur TCC n'est écrit en dur dans le dépôt. La capture
 correspondante n'a pas été observée.
 
+## Vérification d'identité TCC du 2026-11-12 (lot 1)
+
+Mesures de l'agent en **lecture seule**, sur `HEAD` `027f5b3` et sur les deux
+bundles présents, sans build, installation, lancement, capture, son ni réponse à
+une invite. L'application installée tournait déjà (pid 21812) ; l'agent ne l'a ni
+lancée ni arrêtée.
+
+| Élément | Méthode | Résultat observé par l'agent |
+|---|---|---|
+| Bundle installé | `PlistBuddy` sur `Info.plist` | `CFBundleIdentifier` = `com.naada.recorder`, version `1.0.0` |
+| Bundle du dépôt | même lecture | `CFBundleIdentifier` = `com.naada.recorder` |
+| Identité de signature | `codesign -dv --verbose=4` sur les deux bundles | `Authority=Developer ID Application: Jonathan Bahu (BG55CF653X)`, `TeamIdentifier=BG55CF653X`, `flags=0x10000(runtime)`, `Timestamp=12 Nov 2026 at 23:07:00`, `CDHash=a14d06237adc0ae70ff4be338b2f01a5f1c3b670` |
+| Exigence désignée | `codesign -d -r-` sur les deux bundles | identifiant + équipe `BG55CF653X`, sans CDHash |
+| Entitlements | `codesign -d --entitlements :-` | sortie stdout vide (0 octet) : aucune entitlement |
+| Validité | `codesign --verify --strict` | exit 0 sur les deux bundles |
+| Égalité des bundles | `diff -qr`, `cmp`, SHA-256 | aucune différence ; binaires identiques, SHA-256 `cab42db1…`, 1 249 008 octets |
+| Gatekeeper | `spctl --assess --verbose=4 /Applications/Naada.app` | `rejected`, `source=Unnotarized Developer ID`, exit 3 ; même résultat sur le bundle du dépôt |
+| Processus | `ps -p 21812 -o pid=,lstart=,command=` ; `lsof -p 21812 -a -d txt` | pid 21812, démarré `Thu Nov 12 23:21:19 2026`, chemin réel `/Applications/Naada.app/Contents/MacOS/Naada` ; un seul processus Naada |
+| Ancien build installé | ce document, vague `7f50042` | CDHash `988b6333…` — différent du build courant |
+| Bundle du dépôt avant ce lot | ce document, lot 3 | ad hoc `069b49c1…` ; il est maintenant identique au bundle installé |
+
+### Journal TCC des trois dernières heures
+
+Commande : `log show --last 3h --style compact --predicate 'subsystem == "com.apple.TCC" AND eventMessage CONTAINS[c] "naada"'`
+— exit 0, 396 lignes. Le journal mêle des harnais de test, d'autres services et
+des demandes antérieures à 23:21 ; seules les lignes du build installé sont
+retenues ici.
+
+À partir de 23:21:49, `tccd` journalise pour le processus 21812 (chemin
+`/Applications/Naada.app`) :
+
+- huit fois `Failed to match existing code requirement for subject
+  com.naada.recorder and service kTCCServiceScreenCapture` ; le bloc imprime
+  `cdhash H"4af24d79022ba95fbfdc3dfbd888d37e17ac8a65"` (CDHash du bundle isolé
+  historique de la passe UI) et l'exigence Developer ID stable, mais la
+  correspondance échoue ;
+- deux fois `Notifying for access kTCCServiceScreenCapture ... responsiblePath:
+  /Applications/Naada.app` (23:23:42 et 23:23:52) : une nouvelle invite est
+  notifiée ;
+- aucune ligne `AUTHREQ_RESULT` (grant/deny) dans les 396 lignes collectées ;
+- deux événements `type=Modify` pour ScreenCapture à 23:23:46 et 23:23:48, sans
+  corps exploitable ; leur origine n'est pas déterminée et ils ne sont pas
+  suivis d'une correspondance réussie.
+
+Le CDHash `988b6333…` de l'ancien build installé n'apparaît pas dans ces lignes ;
+celui de l'exigence existante imprimée est `4af24d79…`. Le journal ne dit pas
+quelle action a déclenché la demande, ni si l'invite a été affichée, acceptée ou
+refusée. Aucun résultat d'autorisation n'y est lisible.
+
+### Conclusion
+
+**Verdict** : identité de signature valide et stable ; identité TCC **différente**
+de l'autorisation enregistrée ; consentement **non prouvé**.
+
+- **Identité de signature** : Developer ID `BG55CF653X`, runtime durci,
+  horodatage, exigence sans CDHash, aucune entitlement ;
+  `codesign --verify --strict` OK. Les deux bundles sont identiques au bit près.
+- **Identité TCC** : le journal imprime, sous l'échec de correspondance de
+  l'exigence existante, `cdhash H"4af24d79…"` (ancien bundle isolé) et non le
+  CDHash courant `a14d0623…` ; `tccd` notifie une nouvelle demande. Le build
+  installé n'est donc pas reconnu comme déjà autorisé.
+- **Consentement** : l'invite est notifiée mais aucun choix n'est journalisé,
+  l'agent ne l'a pas observée et l'état de la case dans les Réglages n'a pas été
+  lu. Une signature valide ne prouve pas le consentement.
+
+L'attestation utilisateur du 2026-11-12 consignée plus haut (application cochée,
+nouvelle demande, texte système évoquant un refus TCC, sans refus volontaire
+attesté) porte sur l'état antérieur ; elle ne prouve pas le consentement du build
+courant. `spctl` rejette le bundle non notarisé, ce qui est distinct du
+consentement TCC. Aucun remède n'a été appliqué ni proposé dans cette section.
+
 ## Prouvé avant la passe UI, sans capture (historique `dba658c`)
 
 Ces preuves datent du build `dba658c` ; le build `7f50042` est couvert par
@@ -159,10 +232,14 @@ fonctionnement général de l'enregistrement, pas ces détails :
    observé dans l'application lancée.
 3. **Icône dans le Dock** : variantes compilées contrôlées, basculement
    clair/sombre dans le Dock non observé.
-4. **Application installée** : `/Applications/Naada.app` n'a pas été lancée ;
-   Gatekeeper la rejette (non notarisée) ; son état repos n'est pas observé.
-5. **TCC après changement de CDHash** : non observé ; on ne sait pas si une
-   nouvelle autorisation est demandée après le CDHash `988b6333…`.
+4. **Application installée** : `/Applications/Naada.app` tournait déjà pendant
+   les mesures d'identité (pid 21812), sans lancement par l'agent ; Gatekeeper la
+   rejette (non notarisée) ; son état repos n'est pas observé.
+5. **Réponse à l'invite TCC** : les journaux `tccd` montrent l'échec de
+   correspondance de l'exigence enregistrée et une nouvelle notification d'accès
+   pour le build installé (section « Vérification d'identité TCC ») ; l'affichage
+   de l'invite, le choix de la personne et l'état de la case dans les Réglages ne
+   sont pas observés.
 6. **Continuité du son système** pendant la capture : non vérifiée.
 7. **Lecture audible** du MP3 : non faite ; `afinfo` ne prouve que le conteneur
    et les métadonnées, jamais le contenu audible.
