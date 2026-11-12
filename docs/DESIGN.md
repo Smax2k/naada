@@ -131,3 +131,139 @@ aucune dépendance externe à l'exécution.
   ID garde l'identifiant et l'équipe stables, mais son runtime durci et son
   horodatage ne valent pas notarisation.
 - Pas de reprise, pause, édition, tags ID3, planification ni envoi réseau.
+
+## Autorisation audio seule : constat du 12 novembre 2026
+
+Constat établi sur macOS 27.2.1 (26B131), SDK macOS 27.2, sans build, sans
+lancement, sans capture et sans modification de TCC. Les preuves retenues sont
+les pages Apple et les en-têtes du SDK ; aucun réglage système ni aucune case
+cochée n'est invoqué. Les pages ont été lues via leur représentation JSON Apple
+(le HTML est rendu en JavaScript).
+
+### Limite du chemin actuel
+
+Le chemin actuel reste ScreenCaptureKit, même si seule la sortie audio est
+consommée :
+
+- `SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)`
+  (`Sources/Naada/AudioCaptureEngine.swift`) énumère les écrans, applications et
+  fenêtres, puis le flux `SCStream` est créé. C'est l'ensemble de ce chemin
+  ScreenCaptureKit qui relève de l'autorisation d'enregistrement de l'écran.
+- `SCContentFilter(display:including:exceptingWindows:)` rattache le flux à un
+  écran ; `configuration.width` et `height` ne servent qu'à la vidéo, et seule
+  une sortie `.audio` est ajoutée. Ces réglages ne changent pas la classe de
+  permission demandée par l'API. Le code échoue aussi avec `noDisplayAvailable`
+  si aucun écran n'est disponible, alors que l'audio seul n'en a pas besoin.
+- `NSScreenCaptureUsageDescription` (`packaging/Info.plist`) est la description
+  de cette autorisation. Son texte actuel décrit l'audio, mais la clé et l'API
+  restent celles de l'écran. La clé ne déclenche rien par elle-même : la demande
+  TCC vient des appels ScreenCaptureKit. La retirer sans retirer ces appels ne
+  rend pas la capture audio seule.
+- La documentation ScreenCaptureKit demande l'autorisation d'enregistrement de
+  l'écran avant de capturer du contenu, et l'échantillon Apple indique que le
+  système la demande au premier lancement. Le fait que Naada ne consomme aucune
+  image ne change pas cette exigence.
+
+Références lues :
+
+- <https://developer.apple.com/documentation/screencapturekit>
+- <https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos>
+- <https://developer.apple.com/documentation/screencapturekit/scshareablecontent>
+
+Conséquence : un refus d'enregistrement de l'écran bloque ce chemin. Pour une
+autorisation audio seule, il faut sortir de ScreenCaptureKit.
+
+### Voie officielle audio seule : taps de processus Core Audio
+
+Apple documente les taps de processus et leur agrégat :
+
+- API : `AudioHardwareCreateProcessTap(_:_:)` avec un `CATapDescription`, puis
+  `AudioHardwareCreateAggregateDevice(_:_:)` et
+  `kAudioAggregateDevicePropertyTapList` pour lire le tap comme une entrée.
+- Version : `AudioHardwareTapping.h` déclare
+  `API_AVAILABLE(macos(14.2)) API_UNAVAILABLE(ios, watchos, tvos)` ; la page
+  Apple demande macOS 14.2 ou ultérieur.
+- Clé : `NSAudioCaptureUsageDescription`, documentée à partir de macOS 14.2.
+  La page Apple l'exige dans `Info.plist` et précise que le système demande
+  l'autorisation « system audio recording » au premier enregistrement depuis un
+  agrégat contenant un tap. C'est une autorisation audio, distincte de
+  l'enregistrement de l'écran. Cette voie ne dépend donc pas de l'autorisation
+  d'enregistrement de l'écran, mais elle ne supprime pas toute autorisation :
+  elle demande l'autorisation audio.
+- Non-reroutage : `CATapMuteBehavior` vaut `CATapUnmuted` par défaut, décrit
+  comme « Audio is captured by the tap and also sent to the audio hardware ».
+  Un tap passif non muet est donc possible. `CATapMuted` et
+  `CATapMutedWhenTapped` couperaient la sortie et ne doivent pas être utilisés.
+- Agrégat privé : `kAudioAggregateDeviceIsPrivateKey` rend l'agrégat visible
+  seulement au processus qui l'a créé ; le tap lui-même peut être privé avec
+  `CATapDescription.isPrivate`. L'agrégat ne change pas à lui seul la sortie par
+  défaut : celle-ci est une propriété distincte
+  (`kAudioHardwarePropertyDefaultOutputDevice`). C'est un conteneur d'entrée,
+  « just like a microphone ».
+- Ciblage : `CATapDescription.processes` attend des `AudioObjectID` de
+  processus. `kAudioHardwarePropertyTranslatePIDToProcessObject` traduit le PID
+  en objet processus. `bundleIDs` n'est disponible qu'à partir de macOS 26.0 et
+  ne peut donc pas servir pour la cible 14.x.
+
+Références lues :
+
+- <https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps>
+- <https://developer.apple.com/documentation/bundleresources/information-property-list/nsaudiocaptureusagedescription>
+- En-têtes lus sous
+  `$(xcrun --show-sdk-path)/System/Library/Frameworks/CoreAudio.framework/Headers/` :
+  `AudioHardwareTapping.h`, `CATapDescription.h`, `AudioHardware.h`.
+- En-têtes lus sous
+  `$(xcrun --show-sdk-path)/System/Library/Frameworks/ScreenCaptureKit.framework/Headers/` :
+  `SCStream.h`, `SCShareableContent.h`.
+
+### Ce qui n'est pas prouvé
+
+- Aucune capture n'a été lancée : le libellé exact de la demande TCC sur
+  macOS 27.2.1, le comportement en cas de refus, la reprise après redémarrage de
+  l'application source et la capture d'applications à processus audio séparés
+  (par exemple Chrome) restent à vérifier en runtime.
+- La page de l'échantillon Core Audio taps affiche macOS 26.0 (et Xcode 26.0)
+  dans ses métadonnées, alors que son corps et les en-têtes confirment 14.2. La
+  version 14.2 est retenue sur la base des en-têtes et de la page de la clé.
+- Le projet cible macOS 14.0 (`Package.swift`, `LSMinimumSystemVersion`), alors
+  que l'API demande 14.2. `PackageDescription.MacOSVersion` n'a pas de cas
+  14.2, mais `SupportedPlatform.macOS(_ versionString: String)` existe dans
+  l'interface du toolchain (Swift 6.4.2) : `.macOS("14.2")` permet donc
+  d'exprimer 14.2. Si la cible de déploiement reste 14.0 (`.macOS(.v14)`),
+  l'appel doit être entouré d'une garde `#available(macOS 14.2, *)` avec un
+  message explicite sur 14.0–14.1 ; relever `LSMinimumSystemVersion` à 14.2
+  peut refuser le lancement sur 14.0–14.1, mais ne dispense pas de la garde si
+  la cible de déploiement reste 14.0.
+- Le catalogue d'applications n'a pas été lu dans ce lot. S'il utilise encore
+  ScreenCaptureKit pour énumérer les applications, il doit être traité dans le
+  même changement, sinon la promesse « audio seul » ne tient pas.
+- La signature Developer ID stable reste nécessaire pour que la nouvelle
+  autorisation TCC soit attachée à une identité stable ; ce point n'a pas été
+  rejoué.
+
+### Recommandation
+
+Retenir les taps de processus Core Audio pour supprimer la dépendance à
+l'autorisation d'enregistrement de l'écran, sous réserve de la vérification
+runtime ci-dessus.
+Aucun code n'est modifié dans ce lot ; les fichiers à changer sont :
+
+1. `Sources/Naada/AudioCaptureEngine.swift` : remplacer l'énumération
+   `SCShareableContent`, le filtre écran et le `SCStream` audio par un
+   `CATapDescription` ciblé sur le PID, `AudioHardwareCreateProcessTap`, un
+   agrégat privé et une lecture d'entrée, sans définir l'agrégat comme sortie
+   par défaut. Conserver le pipeline MP3, le convertisseur et la jauge ; fixer
+   explicitement `CATapUnmuted`.
+2. `packaging/Info.plist` : ajouter `NSAudioCaptureUsageDescription` avec un
+   message français ; retirer `NSScreenCaptureUsageDescription` seulement après
+   disparition de tout appel ScreenCaptureKit. Relever
+   `LSMinimumSystemVersion` à 14.2 si l'application doit refuser 14.0–14.1, ou
+   documenter le message explicite sur ces versions.
+3. `Package.swift` : lier `CoreAudio` ; retirer `ScreenCaptureKit` si plus aucun
+   appel ne subsiste ; exprimer la cible avec `.macOS("14.2")` (surcharge
+   `SupportedPlatform.macOS(_ versionString: String)`), ou garder
+   `.macOS(.v14)` et la garde `#available(macOS 14.2, *)` si la cible de
+   déploiement reste 14.0.
+
+Cette recommandation repose sur les pages et en-têtes ci-dessus, pas sur un
+réglage système, une capture d'écran ou un essai runtime.
