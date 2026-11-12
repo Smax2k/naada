@@ -16,11 +16,17 @@ cd /Volumes/NVME1To/Projets/naada
 open ./Naada.app
 ```
 
-Le bundle est signé ad hoc (`codesign --sign -`). Il n'est ni notarisé ni
-publié. La première capture réelle peut déclencher l'autorisation macOS
-« Enregistrement de l'écran » : ScreenCaptureKit sert aussi à capter l'audio
-d'une application. Naada ne capture aucune image, n'ouvre aucun microphone et
-ne modifie pas la sortie audio.
+Le bundle produit par `./scripts/build.sh` est signé ad hoc (`codesign --sign -`).
+L'application installée dans `/Applications` par la vague de vérification est
+signée `Developer ID Application: Jonathan Bahu (BG55CF653X)`, mais elle n'est
+**ni notarisée ni publiée** : Gatekeeper la rejette (`Unnotarized Developer ID`)
+et elle n'a pas été lancée. Les deux signatures sont distinctes ; les détails
+sont dans [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+
+La première capture réelle peut déclencher l'autorisation macOS « Enregistrement
+de l'écran » : ScreenCaptureKit sert aussi à capter l'audio d'une application.
+Naada ne capture aucune image, n'ouvre aucun microphone et ne modifie pas la
+sortie audio.
 
 ## Utilisation
 
@@ -83,15 +89,20 @@ Les tests couvrent :
   Core Audio** (`AVAudioFile`), sans aucune capture audio ;
 - l'arrêt immédiat avant tout buffer, qui produit tout de même un MP3 lisible.
 
-## Vérifications différées
+## Vérifications
 
-La session utilisateur était en cours pendant le développement. **Aucune
-capture réelle, aucun accès microphone, aucune demande d'autorisation, aucune
-lecture de fichier issu d'une capture réelle et aucun test de continuité du son
-système n'ont été effectués.** Le nommage réel, le choix de dossier, les états
-affichés en conditions réelles, l'arrêt et la lecture du MP3 sont également
-différés. Ces vérifications sont décrites dans [`docs/VERIFICATION.md`](docs/VERIFICATION.md)
-et doivent attendre la confirmation explicite que la session est terminée.
+La session utilisateur est terminée. L'état réel est consigné dans
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md), qui sépare l'historique de la
+passe UI `dba658c` (23 tests), le témoignage de Jonathan sur l'enregistrement,
+et la vague `7f50042` (`./scripts/check.sh` : release OK, 27 tests, 0 échec,
+icône contrôlée, application installée signée Developer ID mais rejetée par
+Gatekeeper).
+
+Restent non observés : la jauge en signal, l'alignement et l'icône dans
+l'application lancée, le lancement de l'application installée, la continuité du
+son système, la lecture audible du MP3 et une éventuelle nouvelle autorisation
+TCC après changement de CDHash. Le test manuel proposé est décrit dans
+`docs/VERIFICATION.md`.
 
 ## Documentation
 
