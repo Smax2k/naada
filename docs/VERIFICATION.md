@@ -462,3 +462,65 @@ seule la ligne de commande nomme le service audio.
 4. Recommencer avec Chrome. Après huit secondes sans son, le message doit
    expliquer que le processus choisi n'envoie pas d'audio ; le son de Chrome doit
    rester audible et aucun repli global ou helper ne doit démarrer.
+
+## Capture Chrome par descendants audio — 13 novembre 2026 (lot bloqué, non construit)
+
+### État du lot
+
+- `/Applications/Naada.app` pid 5574 est resté actif pendant tout le lot.
+  Aucun `scripts/build.sh`, `scripts/check.sh`, tap, capture, son, invite
+  macOS, TCC, installation ou commit n'a été exécuté.
+- `./scripts/test.sh` (pur) : **106 tests, 0 échec** (81 avant le lot, 25
+  ajoutés : 13 plan, 6 sélection traduction/tapés, 6 contraintes). SwiftPM
+  compile aussi la cible app dans `.build`, sans produire ni signer de bundle
+  `.app` ; aucun `build.sh` ni remplacement n'a été lancé.
+- Typecheck des sources de l'application contre le module `NaadaCore` déjà
+  construit par les tests : exit 0. Ce n'est ni un link, ni une signature.
+- `zsh -n scripts/check.sh` : exit 0. Les nouveaux garde-fous statiques et la
+  parité des tables `en`/`fr` (103 clés chacune) ont été vérifiés à la main ;
+  `scripts/check.sh` complet n'a pas été lancé car il construit le bundle.
+- `git diff --check` : exit 0.
+
+### Preuve lecture seule du plan
+
+- Table `ps` du 13 novembre 2026 03:09 UTC, racine Chrome 721.
+- Plan : `selected=721,1626`, helper unique 1626
+  (`audio.mojom.AudioService`, `--service-sandbox-type=audio`, ppid 721).
+- Traduction HAL lecture seule : 721 → objet 230, 1626 → objet 228 ; la
+  racine est donc traduite, le helper aussi. Le diagnostic de la sonde
+  distingue malgré tout `requestedRootPID`, `rootIsTranslated`, `tappedPIDs`
+  et `untranslatedPIDs` (tests purs).
+- Rejetés : 951 GPU, 952 réseau, 1080/1082/… renderers, 1627
+  `video_capture`, 942 crashpad (ppid 1, hors arbre), 1026 stockage, 1097
+  gestionnaire de mots de passe, processus `defunct`.
+- Journal : `.orchestrator/chrome-tap-pids.txt`.
+
+### Blocages précis
+
+1. **Naada pid 5574 active** : la consigne interdit `build.sh`, `check.sh`,
+   tap et installation tant qu'elle tourne. Aucun bundle n'a été construit,
+   signé ni installé.
+2. **Chrome ne produit aucun son à cet instant** :
+   `kAudioProcessPropertyIsRunningOutput` vaut `false` pour 721 (objet 230) et
+   1626 (objet 228), relevé en lecture seule. Jouer un son est interdit ;
+   sans signal existant, aucune preuve RMS ou MP3 n'est possible.
+3. **Conséquence** : aucun tap réel, aucune jauge vivante, aucun MP3, aucune
+   comparaison de sortie audio, aucune installation. Ces points restent non
+   observés et ne sont pas validés.
+
+### À faire quand les blocages sont levés
+
+1. Arrêter Naada (action humaine), vérifier que `pgrep -x Naada` est vide.
+2. Construire et signer avec `./scripts/build.sh`, comparer le bundle construit
+   au dépôt. **Ne pas installer encore.**
+3. Faire jouer un son par Chrome (action humaine), puis lancer la preuve
+   depuis le bundle construit seulement :
+   `Naada.app/Contents/MacOS/Naada --capture-probe 721 .orchestrator 10`.
+   Le dossier `.orchestrator` reçoit `chrome-capture-proof.json` et le MP3 ;
+   il ne doit jamais être le dossier d'enregistrements de la personne.
+4. Exiger `callbackRMSMax > 0.02`, `mp3RMS > 0.02`,
+   `mp3SampleRate == 48000`, `mp3Channels == 2` et
+   `defaultOutputUnchanged == true`. Si une invite TCC ou Gatekeeper bloque,
+   arrêter et signaler : ne pas contourner.
+5. Installer `/Applications/Naada.app` **seulement après** cette preuve, si le
+   bundle construit est identique et si Naada est toujours arrêtée.

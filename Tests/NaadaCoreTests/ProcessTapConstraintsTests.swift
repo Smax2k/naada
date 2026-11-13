@@ -6,6 +6,8 @@ final class ProcessTapConstraintsTests: XCTestCase {
         let plan = ProcessTapConstraints.processOnly(processObjectID: 4_242)
 
         XCTAssertEqual(plan.processObjectIDs, [4_242])
+        XCTAssertEqual(plan.applicationProcessObjectIDs, [4_242])
+        XCTAssertTrue(plan.verifiedAudioHelperObjectIDs.isEmpty)
         XCTAssertTrue(plan.isPrivate)
         XCTAssertEqual(plan.muteBehavior, .unmuted)
         XCTAssertFalse(plan.usesBundleIdentifiers)
@@ -14,6 +16,98 @@ final class ProcessTapConstraintsTests: XCTestCase {
         XCTAssertTrue(plan.isValid)
         XCTAssertTrue(plan.violations.isEmpty)
         XCTAssertNoThrow(try plan.validate())
+    }
+
+    func testVerifiedApplicationAndAudioHelperAreBothTargeted() {
+        let plan = ProcessTapConstraints.verifiedApplicationAudio(
+            applicationObjectID: 4_242,
+            translatedHelpers: [
+                TranslatedAudioHelper(process: helper(), processObjectID: 8_888),
+            ]
+        )
+
+        XCTAssertEqual(plan.processObjectIDs, [4_242, 8_888])
+        XCTAssertEqual(plan.applicationProcessObjectIDs, [4_242])
+        XCTAssertEqual(plan.verifiedAudioHelperObjectIDs, [8_888])
+        XCTAssertEqual(plan.verifiedAudioHelperPIDs, [1_626])
+        XCTAssertEqual(plan.targets.last?.helper?.pid, 1_626)
+        XCTAssertTrue(plan.isValid)
+        XCTAssertNoThrow(try plan.validate())
+    }
+
+    func testVerifiedHelperAloneIsAcceptedWhenTheChosenProcessHasNoAudioObject() {
+        let plan = ProcessTapConstraints.verifiedApplicationAudio(
+            applicationObjectID: nil,
+            translatedHelpers: [
+                TranslatedAudioHelper(process: helper(), processObjectID: 8_888),
+            ]
+        )
+
+        XCTAssertEqual(plan.processObjectIDs, [8_888])
+        XCTAssertTrue(plan.applicationProcessObjectIDs.isEmpty)
+        XCTAssertEqual(plan.verifiedAudioHelperObjectIDs, [8_888])
+        XCTAssertTrue(plan.isValid)
+    }
+
+    func testMissingApplicationAndMissingHelperAreRejected() {
+        let plan = ProcessTapConstraints.verifiedApplicationAudio(
+            applicationObjectID: nil,
+            translatedHelpers: []
+        )
+
+        XCTAssertEqual(plan.violations, [.noProcess])
+        assertValidationFails(plan, with: [.noProcess])
+    }
+
+    func testTwoApplicationProcessesAreAnArbitrarySetAndAreRejected() {
+        var plan = ProcessTapConstraints.processOnly(processObjectID: 12)
+        plan.targets.append(
+            ProcessTapConstraints.Target(processObjectID: 34, role: .application)
+        )
+
+        XCTAssertEqual(plan.violations, [.multipleApplications])
+        assertValidationFails(plan, with: [.multipleApplications])
+    }
+
+    func testAudioHelperWithoutThePlannerProofIsRejected() {
+        var plan = ProcessTapConstraints.processOnly(processObjectID: 12)
+        plan.targets.append(
+            ProcessTapConstraints.Target(
+                processObjectID: 34,
+                role: .verifiedAudioHelper
+            )
+        )
+
+        XCTAssertEqual(plan.violations, [.audioHelperWithoutProof])
+        assertValidationFails(plan, with: [.audioHelperWithoutProof])
+    }
+
+    func testDuplicateProcessObjectIsRejected() {
+        var plan = ProcessTapConstraints.processOnly(processObjectID: 12)
+        plan.targets.append(
+            ProcessTapConstraints.Target(
+                processObjectID: 12,
+                role: .verifiedAudioHelper,
+                helper: helper()
+            )
+        )
+
+        XCTAssertEqual(plan.violations, [.duplicateProcess])
+        assertValidationFails(plan, with: [.duplicateProcess])
+    }
+
+    func testUnknownProcessObjectIsRejected() {
+        let application = ProcessTapConstraints.processOnly(processObjectID: 0)
+        XCTAssertEqual(application.violations, [.unknownProcessObject])
+
+        let helperPlan = ProcessTapConstraints.verifiedApplicationAudio(
+            applicationObjectID: nil,
+            translatedHelpers: [
+                TranslatedAudioHelper(process: helper(), processObjectID: 0),
+            ]
+        )
+        XCTAssertEqual(helperPlan.violations, [.unknownProcessObject])
+        assertValidationFails(helperPlan, with: [.unknownProcessObject])
     }
 
     func testMutedTapIsRejected() {
@@ -57,26 +151,12 @@ final class ProcessTapConstraintsTests: XCTestCase {
         assertValidationFails(plan, with: [.defaultOutputTargeting])
     }
 
-    func testGlobalTapWithoutProcessIsRejected() {
-        var exclusivePlan = ProcessTapConstraints.processOnly(processObjectID: 12)
-        exclusivePlan.isExclusive = true
-        XCTAssertEqual(exclusivePlan.violations, [.globalSystemTargeting])
-        assertValidationFails(exclusivePlan, with: [.globalSystemTargeting])
-
-        var emptyPlan = ProcessTapConstraints.processOnly(processObjectID: 12)
-        emptyPlan.processObjectIDs = []
-        XCTAssertEqual(emptyPlan.violations, [.noProcess])
-
-        let unknownPlan = ProcessTapConstraints.processOnly(processObjectID: 0)
-        XCTAssertEqual(unknownPlan.violations, [.unknownProcessObject])
-    }
-
-    func testMultipleProcessesAreRejected() {
+    func testExclusiveGlobalTapIsRejected() {
         var plan = ProcessTapConstraints.processOnly(processObjectID: 12)
-        plan.processObjectIDs = [12, 34]
+        plan.isExclusive = true
 
-        XCTAssertEqual(plan.violations, [.multipleProcesses])
-        assertValidationFails(plan, with: [.multipleProcesses])
+        XCTAssertEqual(plan.violations, [.globalSystemTargeting])
+        assertValidationFails(plan, with: [.globalSystemTargeting])
     }
 
     func testAllViolationsAreReportedTogether() {
@@ -86,10 +166,21 @@ final class ProcessTapConstraintsTests: XCTestCase {
         plan.usesBundleIdentifiers = true
         plan.targetsDefaultOutputDevice = true
         plan.isExclusive = true
+        plan.targets.append(
+            ProcessTapConstraints.Target(processObjectID: 34, role: .application)
+        )
+        plan.targets.append(
+            ProcessTapConstraints.Target(
+                processObjectID: 56,
+                role: .verifiedAudioHelper
+            )
+        )
 
         XCTAssertEqual(
             Set(plan.violations),
             Set([
+                .multipleApplications,
+                .audioHelperWithoutProof,
                 .notPrivate,
                 .outputMuted,
                 .bundleIDTargeting,
@@ -120,6 +211,17 @@ final class ProcessTapConstraintsTests: XCTestCase {
                 constraintError.localizedDescription.contains("outputMuted")
             )
         }
+    }
+
+    private func helper(
+        pid: pid_t = 1_626,
+        parentPID: pid_t = 721
+    ) -> VerifiedAudioHelperProcess {
+        VerifiedAudioHelperProcess(
+            pid: pid,
+            parentPID: parentPID,
+            command: ApplicationAudioProcesses.audioServiceUtilityMarker
+        )
     }
 
     private func assertValidationFails(

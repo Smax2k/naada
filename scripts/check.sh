@@ -79,6 +79,151 @@ if ! grep -Fq 'muteBehavior = .unmuted' Sources/Naada/AudioCaptureEngine.swift; 
     exit 1
 fi
 
+# Le plan des descendants audio reste pur et vérifiable sans Core Audio.
+for required_symbol in \
+    audio.mojom.AudioService \
+    --service-sandbox-type=audio \
+    chrome_crashpad_handler \
+    video_capture.mojom.VideoCaptureService \
+    network.mojom.NetworkService \
+    isDescendant \
+    VerifiedAudioHelperProcess \
+    TranslatedAudioHelper \
+    ApplicationAudioTapSelection; do
+    if ! grep -Fq -- "$required_symbol" Sources/NaadaCore/ApplicationAudioProcesses.swift; then
+        echo "Échec : le plan des descendants audio n'expose pas $required_symbol." >&2
+        exit 1
+    fi
+done
+
+for required_symbol in \
+    ApplicationAudioProcesses.plan \
+    ApplicationAudioTapSelection \
+    translatedObjectIDs \
+    LiveProcessTable.snapshot \
+    didRetryForAudioHelper \
+    refreshAudioHelpersIfNeeded; do
+    if ! grep -Fq "$required_symbol" Sources/Naada/AudioCaptureEngine.swift; then
+        echo "Échec : le moteur n'utilise pas $required_symbol." >&2
+        exit 1
+    fi
+done
+
+for required_symbol in \
+    verifiedApplicationAudio \
+    audioHelperWithoutProof \
+    multipleApplications; do
+    if ! grep -Fq "$required_symbol" Sources/NaadaCore/ProcessTapConstraints.swift; then
+        echo "Échec : les contraintes n'exposent pas $required_symbol." >&2
+        exit 1
+    fi
+done
+
+if grep -REn 'does not capture|ne capture pas|which Naada does not capture' \
+    Sources packaging >/dev/null; then
+    echo "Échec : un message prétend encore que les helpers audio ne sont pas capturés :" >&2
+    grep -REn 'does not capture|ne capture pas|which Naada does not capture' \
+        Sources packaging >&2
+    exit 1
+fi
+
+for required_key in \
+    "The selected process is not playing sound. Start playback" \
+    "Naada also captures the application's audio helper processes."; do
+    for table in packaging/en.lproj/Localizable.strings packaging/fr.lproj/Localizable.strings; do
+        if ! grep -Fq -- "$required_key" "$table"; then
+            echo "Échec : $table ne contient pas le message corrigé : $required_key" >&2
+            exit 1
+        fi
+    done
+done
+
+# La sonde doit sortir avant toute fenêtre, toute scène et toute activation.
+NAADA_APP="Sources/Naada/NaadaApp.swift"
+if ! grep -Fq 'CaptureProbe.exitIfRequested' "$NAADA_APP"; then
+    echo "Échec : la sonde de capture n'est pas branchée dans NaadaApp." >&2
+    exit 1
+fi
+PROBE_LINE="$(grep -n 'CaptureProbe.exitIfRequested' "$NAADA_APP" | head -1 | cut -d: -f1)"
+WINDOW_LINE="$(grep -n 'WindowGroup' "$NAADA_APP" | head -1 | cut -d: -f1)"
+ACTIVATE_LINE="$(grep -n 'NSApp.activate' "$NAADA_APP" | head -1 | cut -d: -f1)"
+if [[ -z "$PROBE_LINE" || -z "$WINDOW_LINE" || "$PROBE_LINE" -ge "$WINDOW_LINE" ]]; then
+    echo "Échec : la sonde doit être appelée avant la première scène." >&2
+    exit 1
+fi
+if [[ -n "$ACTIVATE_LINE" && "$PROBE_LINE" -ge "$ACTIVATE_LINE" ]]; then
+    echo "Échec : la sonde doit être appelée avant l'activation de l'application." >&2
+    exit 1
+fi
+
+if ! grep -Fq 'ApplicationAudioProcesses.plan' \
+    Tests/NaadaCoreTests/ApplicationAudioProcessesTests.swift; then
+    echo "Échec : les tests ne couvrent pas le plan des descendants audio." >&2
+    exit 1
+fi
+
+for required_symbol in \
+    ApplicationAudioTapSelection \
+    requestedRootPID \
+    rootIsTranslated \
+    tappedPIDs \
+    untranslatedPIDs \
+    failCapture; do
+    if ! grep -Fq "$required_symbol" Sources/Naada/AudioCaptureEngine.swift; then
+        echo "Échec : le moteur ne distingue pas ou ne gère pas $required_symbol." >&2
+        exit 1
+    fi
+done
+
+for required_symbol in \
+    callbackRMSMax \
+    mp3RMS \
+    defaultOutputUnchanged \
+    defaultOutputIdentity \
+    proofFileName \
+    isOutsideRecordingsFolder \
+    writeProof \
+    SessionSettingsStore.outputFolderPathKey; do
+    if ! grep -Fq "$required_symbol" Sources/Naada/CaptureProbe.swift; then
+        echo "Échec : la sonde n'exige pas ou n'enregistre pas $required_symbol." >&2
+        exit 1
+    fi
+done
+
+if grep -Fq 'AudioObjectSetPropertyData' Sources/Naada/CaptureProbe.swift; then
+    echo "Échec : la sonde doit seulement lire la sortie par défaut, jamais la modifier." >&2
+    exit 1
+fi
+
+python3 - <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path("Sources/Naada/AudioCaptureEngine.swift").read_text()
+start = text.index("private func refreshAudioHelpersIfNeeded")
+end = text.index("// MARK: - IOProc", start)
+block = text[start:end]
+
+try:
+    invalidate = block.index("activeGeneration.withLock { $0 = 0 }")
+    destroy = block.index("Self.destroy(endpoints)")
+    create = block.index("createResources(")
+except ValueError:
+    print("Échec : la reprise ne détruit pas clairement l'ancien tap avant le nouveau.", file=sys.stderr)
+    raise SystemExit(1)
+
+if not invalidate < destroy < create:
+    print(
+        "Échec : la reprise doit invalider la génération, détruire l'ancien tap, puis créer le nouveau.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+print("✓ Reprise sans chevauchement : génération invalidée, ancien tap détruit avant création")
+PY
+
+echo "✓ Diagnostic racine/tapés, double RMS, sortie par défaut lue seulement, preuve hors dossier humain"
+
 AUDIO_USAGE="$(plutil -extract NSAudioCaptureUsageDescription raw -o - Naada.app/Contents/Info.plist)"
 if [[ -z "$AUDIO_USAGE" ]]; then
     echo "Échec : NSAudioCaptureUsageDescription est absente ou vide." >&2

@@ -580,7 +580,7 @@ final class RecorderViewModel: ObservableObject {
             if engine.selectedProcessIsProducingOutput() == false {
                 message = String(
                     format: NSLocalizedString(
-                        "Naada is not receiving audio from “%@”. The process it selected is not playing sound; a browser often plays audio in a separate helper process, which Naada does not capture. Choose an application whose own process is playing the sound.",
+                        "Naada is not receiving audio from “%@”. The selected process is not playing sound. Start playback and check that the application is not muted.",
                         comment: "No audio from the selected process"
                     ),
                     application.name
@@ -588,7 +588,7 @@ final class RecorderViewModel: ObservableObject {
             } else {
                 message = String(
                     format: NSLocalizedString(
-                        "No audio has arrived from “%@” yet. Make sure it is playing sound. A browser may play its audio in a separate helper process, which Naada does not capture.",
+                        "No audio has arrived from “%@” yet. Start playback and check that the application is not muted. Naada also captures the application's audio helper processes.",
                         comment: "No audio yet from the selected application"
                     ),
                     application.name

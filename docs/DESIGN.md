@@ -380,3 +380,60 @@ commités.
   enregistrer du silence jusqu'à l'arrêt.
 - Ces points ne sont ni prouvés ni corrigés par ce lot ; ils restent à vérifier
   au runtime.
+
+## Capture Chrome par descendants audio vérifiés — 13 novembre 2026
+
+Le tap ne se limite plus au seul PID choisi : il inclut les descendants dont
+la ligne de commande désigne le service audio de Chromium. La règle reste
+stricte et testable sans Core Audio.
+
+### Plan pur
+
+- `ApplicationAudioProcesses.plan(rootPID:processes:)` conserve le PID choisi
+  comme racine et n'ajoute que les descendants, directs ou profonds, dont la
+  commande contient `--utility-sub-type=audio.mojom.AudioService` ou
+  `--service-sandbox-type=audio`.
+- Rejet explicite : renderers, GPU, réseau, capture vidéo, crashpad,
+  processus hors de l'arbre, cycles de parents et commandes illisibles.
+- Sans helper, le plan ne contient que le PID choisi.
+- `VerifiedAudioHelperProcess` a un initialiseur interne au module : hors de
+  `NaadaCore`, seul le plan peut produire la preuve. Un identifiant arbitraire
+  ne peut pas être présenté comme helper audio.
+- `ProcessTapConstraints` distingue `.application` et `.verifiedAudioHelper`,
+  refuse deux applications (ensemble arbitraire), un helper sans preuve, les
+  doublons et les identifiants nuls. Les drapeaux privé, non muet, sans bundle
+  ID, sans sortie par défaut et sans système entier restent obligatoires.
+
+### Moteur
+
+- `kAudioHardwarePropertyTranslatePIDToProcessObject` reste le seul moteur de
+  traduction. Un PID non traduisible est omis et conservé dans
+  `untranslatedPIDs` ; la racine demandée reste distincte de la racine
+  traduite, et seuls les PID réellement tapés figurent dans `tappedPIDs`. Si
+  la racine et tous ses helpers sont introuvables, la source est indisponible.
+- Le tap cible l'ensemble vérifié ; l'agrégat et l'IOProc restent privés, non
+  muets et jamais définis comme sortie par défaut.
+- Pendant l'attente du premier buffer, une surveillance bornée (8 s, toutes
+  les 0,5 s) relit la table des processus. Si un nouveau helper audio traduit
+  apparaît, l'ancien IOProc, l'ancien agrégat et l'ancien tap sont arrêtés et
+  détruits **avant** de créer le nouveau : un seul tap existe à la fois,
+  aucun chevauchement. La génération est invalidée avant la destruction et
+  les callbacks de l'ancien IOProc sont rejetés. En cas d'échec de la reprise,
+  la capture s'arrête proprement : plus aucun tap, writer drainé, erreur
+  actionnable remontée, aucune attente fantôme. Un arrêt concurrent invalide
+  la génération, draine le writer et reste prioritaire.
+- `CaptureProbe` (`--capture-probe <pid> <dossier-de-preuves> [secondes]`)
+  appelle le même moteur, imprime la racine demandée, la racine traduite, les
+  PID réellement tapés, les PID omis, le RMS du callback et celui du MP3
+  décodé (48 kHz stéréo), ainsi que l'identité de la sortie par défaut
+  avant/après. La sortie par défaut est seulement lue, jamais modifiée ; une
+  identité changée invalide le succès. La preuve JSON et le MP3 sont écrits
+  dans le dossier de preuves (`.orchestrator`), jamais dans le dossier
+  d'enregistrements de la personne.
+- Les deux messages d'attente ne prétendent plus que les helpers ne sont pas
+  capturés : ils demandent de lancer la lecture et de vérifier le volume.
+
+### Limite de ce lot
+
+Aucun tap n'a été créé pendant ce lot : Naada pid 5574 est restée active et
+Chrome ne produisait aucun son. Le comportement runtime reste à prouver.
