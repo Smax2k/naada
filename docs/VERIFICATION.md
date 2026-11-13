@@ -524,3 +524,141 @@ seule la ligne de commande nomme le service audio.
    arrêter et signaler : ne pas contourner.
 5. Installer `/Applications/Naada.app` **seulement après** cette preuve, si le
    bundle construit est identique et si Naada est toujours arrêtée.
+
+## Preuve autonome réelle — 13 novembre 2026 (bloquée avant le premier buffer)
+
+### Objet et état
+
+Objectif : prouver sans interface, avec une source synthétique isolée, que le
+moteur de Naada reçoit réellement de l'audio (RMS callback), l'encode en MP3
+48 kHz / 2 canaux et le décode (RMS MP3), sans son audible et sans modifier la
+sortie système. Le lot s'arrête **bloqué** : aucun buffer n'a été reçu, aucun
+`chrome-capture-proof.json` n'a été écrit, aucun RMS réel n'existe. Aucune
+validation n'est revendiquée.
+
+- Dépôt : `cbd127fada2776624ff787bc23a0b8891f61ed88`, arbre propre.
+- Machine : macOS 27.2.1 (26B131), Apple Silicon.
+- Construction : `./scripts/build.sh`, exit 0.
+- Bundle construit : `CDHash=86dbed6d46dc99bde27671472c7bb0beb063b996`,
+  `TeamIdentifier=BG55CF653X`, runtime durci, horodatage sécurisé,
+  `codesign --verify --strict` exit 0, exigence stable
+  `identifier "com.naada.recorder" ... certificate leaf[subject.OU] = BG55CF653X`
+  sans CDHash. `spctl -a -vv` : refusé « Unnotarized Developer ID » (attendu,
+  aucun contournement).
+- Installation : `/Applications/Naada.app` remplacé par ce bundle après
+  vérification `pgrep -x Naada` vide. `diff -qr` entre le bundle construit et
+  l'installé : aucun écart ; SHA-256 du binaire
+  `725abd985142353df84f790af23a67a84e62e15b3c3f659b4da718ae6a7dfcd1` identique ;
+  `codesign --verify --strict` exit 0 sur les deux ; même CDHash et même
+  exigence. Aucun lancement GUI volontaire ; l'incident involontaire de
+  l'ancien bundle est consigné en conclusion ; `pgrep -x Naada` vide après.
+
+### Source synthétique et non-audibilité
+
+- Sinus 440 Hz, 48 kHz, 2 canaux, amplitude 0,5 (RMS généré
+  `0,35355339059326846`), produit par un processus CLI isolé.
+- Sortie dirigée vers **BlackHole 2ch** (`BlackHole2ch_UID`), périphérique
+  virtuel sans haut-parleur ; gain numérique testé à 0 puis 1. Aucun son
+  audible, aucun routage ni volume système modifié.
+- Sortie par défaut avant/après : « Écouteurs externes »
+  (`BuiltInHeadphoneOutputDevice`), volume `0,5625`, mute `0` ; `osascript`
+  « output volume:56, output muted:false » inchangé. BlackHole : volume `1,0`,
+  mute `0`, inchangé. Aucun processus du HAL avec `runningInput=1` ; aucun
+  moniteur BlackHole (Loopback, Audio Hijack, OBS, SoundSource) actif.
+- Lecteur BlackHole indépendant pendant la lecture : format 48 000 Hz /
+  2 canaux / 32 bits flottants, **RMS max 0,35912928, 286 callbacks**. La
+  source produit donc réellement l'audio dans le puits virtuel ; ce n'est ni
+  du silence ni une source absente. Ce lecteur ne prouve pas que le tap de
+  processus reçoit ce signal.
+
+### Sonde réelle et blocage
+
+Sonde exécutée sans `open`, exactement
+`Naada.app/Contents/MacOS/Naada --capture-probe <pid source> <dossier> 10`.
+Tentatives : source gain 0 et gain 1 sur BlackHole ; source gain 0 sur la
+sortie par défaut (silencieuse). Toutes se bloquent **avant le premier
+buffer** : aucun `NAADA_CAPTURE_PROBE` sur stdout, aucun
+`chrome-capture-proof.json`, MP3 vide (0 octet) ou absent.
+
+Pile relevée par `sample` sur le processus de la sonde (processus propre
+uniquement) :
+
+```
+AudioCaptureEngine.createResources  AudioCaptureEngine.swift:383
+  AudioDeviceCreateIOProcIDWithBlock
+    HAL_HardwarePlugIn_DeviceCreateIOProcIDWithBlock
+      HALC_ShellDevice::CreateIOProcIDWithBlock
+        HALC_ProxyIOContext::_TellServerAboutStreamUsage
+          HALC_ProxyObject::SetPropertyData
+            mach_msg2_trap
+```
+
+L'attente est donc dans le HAL, à la création de l'IOProc de l'agrégat, pas
+dans la source ni dans le décodage MP3. Cette pile établit **où** l'attente se
+produit ; elle ne démontre pas **pourquoi** (permission, comportement HAL ou
+autre cause).
+
+### Reproduction minimale (hors code Naada)
+
+Un programme de tap minimal dans `.orchestrator/` (aucune modification du
+code de l'application) a reproduit le blocage pendant le relevé. Ses sources,
+binaires et journaux ont été supprimés après relevé : la reproduction exacte
+de cette trace n'est plus possible en l'état ; le tableau ci-dessous est un
+relevé d'observations, pas un banc d'essai conservé :
+
+| Composition de l'agrégat | IOProc | `AudioDeviceStart` | Callbacks / RMS |
+|---|---|---|---|
+| privé + `taps: [{uid, drift:1}]` (forme du moteur, documentée SDK) | **bloqué** | — | — |
+| privé + `taps: [{uid}]`, `drift:0`, `stacked:1`, `tapautostart:1`, `subdevices:[]`, `clock:<uid>` | **bloqué** | — | — |
+| privé + `taps: [uid]` (chaînes) | OK | `1852797029` (`'nope'`) | 0 / 0 |
+| public + `taps: [{uid, drift:1}]`, sans horloge | OK | `1852797029` (`'nope'`) | 0 / 0 |
+| public + dictionnaire + horloge (sortie par défaut ou BlackHole) | OK | `0` | **0 callback / RMS 0** |
+| public + tap lié à BlackHole (`andDeviceUID`) + horloge | OK | `0` | **0 callback / RMS 0** |
+| tap public (toutes agrégations testées) | **bloqué** | — | — |
+
+La forme « chaînes » évite le blocage mais ne délivre aucun callback : ce
+n'est pas un correctif démontré. Aucune variante testée ne délivre de
+callback. Le lecteur BlackHole prouve que la source produit de l'audio dans
+BlackHole ; il ne prouve pas que le tap de processus reçoit ce signal. Ces
+observations ne permettent donc pas de conclure à une cause liée à la version
+de macOS ni à un refus TCC : la cause racine de l'attente HAL reste
+**indéterminée**.
+
+### TCC / permissions
+
+- Aucun dialogue TCC visible pendant les essais : la seule fenêtre
+  `UserNotificationCenter` relevée mesure 6×4 px, alpha 0 (pas un prompt).
+- `log show` unifié inaccessible depuis cette session (une seule ligne) ;
+  la base TCC utilisateur est illisible sans Full Disk Access ; la base TCC
+  système ne contient que l'ancienne autorisation
+  `kTCCServiceScreenCapture|com.naada.recorder|0|2`, pas d'entrée audio.
+- L'état exact de l'autorisation d'enregistrement audio n'est donc pas
+  prouvable ici ; aucune conclusion de refus TCC n'est tirée. Aucun clic,
+  aucune réinitialisation TCC, aucun contournement.
+
+### Conclusion et prochaine action
+
+La preuve demandée **n'est pas atteinte** : aucun RMS callback, aucun RMS MP3,
+aucune jauge réelle, aucun MP3 décodé. Ne pas présenter ce lot comme validé.
+Le blocage a été observé de façon répétée et survient avant le premier buffer.
+L'ancien bundle installé — antérieur à la sonde — a lancé l'interface lors
+d'une exécution directe, arrêtée immédiatement ; aucun enregistrement, aucun
+clic, aucun son.
+
+**Cause racine indéterminée ; état de la permission non prouvé.** Prochaine
+investigation ciblée, avant tout changement de code ou de composition :
+
+1. Établir si une demande de permission audio est visible ou requise pour la
+   sonde, et laquelle, sans la contourner ni la réaccorder à l'aveugle.
+2. Vérifier la composition de l'agrégat et la création de l'IOProc avec une
+   trace conservée, pour distinguer une attente HAL d'un refus de permission.
+
+Ne pas demander génériquement de réaccorder la permission, ne pas modifier
+`TapAggregateComposition` ni le code avant cette investigation. Ne pas relever
+le volume, le gain ou le routage.
+
+Les journaux temporaires de ce lot (`.orchestrator/autonomous-capture-20261113`)
+sont supprimés après relevé ; les métriques et la pile ci-dessus en sont la
+trace conservée. La reproduction exacte du diagnostic minimal n'est donc plus
+possible ; les variantes du tableau sont des observations, pas un banc d'essai
+conservé.
