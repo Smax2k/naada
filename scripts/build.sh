@@ -78,8 +78,17 @@ plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 # Signature Developer ID : exigence désignée stable (identifiant + équipe),
 # runtime durci et horodatage sécurisé. Aucune notarisation.
+# L'entitlement d'entrée audio est indispensable : sous runtime durci, sans
+# lui macOS ne présente jamais la demande microphone.
+ENTITLEMENTS="$ROOT/packaging/Naada.entitlements"
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+    echo "Entitlements introuvables : $ENTITLEMENTS" >&2
+    exit 1
+fi
+
 echo "→ Signature Developer ID (runtime durci, horodatage sécurisé)"
-codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP" >/dev/null
+codesign --force --options runtime --timestamp \
+    --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP" >/dev/null
 codesign --verify --strict "$APP"
 
 SIGNATURE_INFO="$(codesign -dv --verbose=4 "$APP" 2>&1)"
@@ -93,6 +102,11 @@ if [[ "$SIGNATURE_INFO" != *"(runtime)"* ]]; then
 fi
 if [[ "$SIGNATURE_INFO" != *"Timestamp="* ]]; then
     echo "Échec : l'horodatage sécurisé est absent de la signature." >&2
+    exit 1
+fi
+
+if ! codesign -d --entitlements - "$APP" 2>/dev/null | grep -Fq 'com.apple.security.device.audio-input'; then
+    echo "Échec : l'entitlement com.apple.security.device.audio-input est absent de la signature." >&2
     exit 1
 fi
 

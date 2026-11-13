@@ -432,6 +432,10 @@ if [[ "$SIGNATURE_INFO" != *"Timestamp="* ]]; then
     echo "Échec : l'horodatage sécurisé est absent de la signature." >&2
     exit 1
 fi
+if ! codesign -d --entitlements - Naada.app 2>/dev/null | grep -Fq 'com.apple.security.device.audio-input'; then
+    echo "Échec : l'entitlement com.apple.security.device.audio-input est absent ; sous runtime durci la permission microphone ne serait jamais demandée." >&2
+    exit 1
+fi
 
 REQUIREMENT="$(codesign -d -r- Naada.app 2>&1)"
 if ! grep -Fq 'identifier "com.naada.recorder"' <<< "$REQUIREMENT"; then
