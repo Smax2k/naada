@@ -37,14 +37,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(Color.red.opacity(0.12))
-                    .frame(width: 48, height: 48)
-                Image(systemName: "waveform")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.red)
-            }
+            NaadaMark()
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Naada")
