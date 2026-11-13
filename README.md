@@ -45,7 +45,8 @@ system language falls back to English.
 ## Requirements
 
 - macOS 14.2 or later (Core Audio process taps).
-- Xcode command-line tools, Swift 5.9 or later.
+- Xcode, not only the command-line tools: the build compiles the Icon Composer
+  icon with `xcrun actool`. Swift 5.9 or later.
 
 ## Build
 
