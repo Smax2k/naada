@@ -912,3 +912,27 @@ possible ; il ne l'accorde pas. Aucune invite n'a été observée dans ce lot.
 - **Parcours réel** : aucun lancement GUI, aucun clic sur **Enregistrer**,
   aucune vérification de la liste des micros ni du rendu de la fenêtre.
 - Aucun commit, push, publication ni notarisation.
+
+## Consolidation finale — 13 novembre 2026
+
+Passe de consolidation après `71c12b7`. Objectif : ne laisser aucun changement
+non commité et vérifier que l'application installée correspond au commit.
+
+| Élément | Méthode | Résultat observé |
+|---|---|---|
+| Arbre de travail | `git status --short` avant la passe | seul `design-work/` non suivi ; conservé comme trace de la maquette validée et commité (`16eb0b9`), après vérification qu'il ne contient ni secret, ni jeton, ni donnée personnelle (briefs, images, manifeste, réponses de coût) |
+| Naada arrêtée | `pgrep -fl Naada` avant chaque build et avant remplacement | aucune sortie |
+| Build et tests | `./scripts/check.sh` sur `16eb0b9` | exit `0` ; release signée Developer ID, runtime durci, horodatage ; **137 tests, 0 échec** |
+| Ancien bundle installé | `codesign -dv` puis comparaison des segments Mach-O et des ressources | CDHash `43490ddc…` ; `__TEXT` et `Assets.car` différents du build du commit : écart non explicable par la seule signature |
+| Remplacement | `ditto` vers une copie neuve puis bascule | `/Applications/Naada.app` remplacé par le bundle construit depuis `16eb0b9` |
+| Correspondance | `diff -qr Naada.app /Applications/Naada.app` | aucun écart : bundles identiques octet pour octet |
+| Signature installée | `codesign --verify --strict --verbose=2` | exit `0`, valid on disk, satisfies its Designated Requirement |
+| Identité | `codesign -dv --verbose=4` | Authority `Developer ID Application: Jonathan Bahu (BG55CF653X)`, Team `BG55CF653X`, `flags=0x10000(runtime)`, CDHash `9bdebe2b1ce97f09e32f69e788f29614db7414b2` |
+| Entitlement | `codesign -d --entitlements :-` | `com.apple.security.device.audio-input` = `true`, identique au bundle construit |
+| Gatekeeper | `spctl --assess --type execute --verbose=4` | `rejected`, `source=Unnotarized Developer ID`, exit `3` ; attendu sans notarisation, aucun contournement |
+| Notarisation, publication | — | aucune |
+
+Non observé après cette consolidation : le comportement de TCC pour le nouveau
+CDHash `9bdebe2b…`, le lancement de l'application installée, la jauge en signal,
+la continuité du son et la lecture audible du MP3. Aucun son, aucune capture et
+aucune invite n'ont été déclenchés par cette passe.
