@@ -2,21 +2,28 @@ import Foundation
 
 public struct SessionSettings: Equatable, Sendable {
     public var rememberedSource: RememberedSource?
+    public var microphone: MicrophoneChoice
     public var title: String
 
-    public init(rememberedSource: RememberedSource? = nil, title: String = "") {
+    public init(
+        rememberedSource: RememberedSource? = nil,
+        microphone: MicrophoneChoice = .none,
+        title: String = ""
+    ) {
         self.rememberedSource = rememberedSource
+        self.microphone = microphone
         self.title = title
     }
 }
 
-/// Persiste la source et le titre de la dernière session.
+/// Persiste la source, le microphone et le titre de la dernière session.
 ///
-/// Deux clés nouvelles et distinctes sont utilisées. La clé historique du
+/// Trois clés nouvelles et distinctes sont utilisées. La clé historique du
 /// dossier de sortie (`naada.outputFolderPath`) n'est ni lue, ni réécrite, ni
 /// migrée ici : une installation existante garde son dossier tel quel.
 public final class SessionSettingsStore {
     public static let rememberedSourceKey = "naada.rememberedSource"
+    public static let rememberedMicrophoneKey = "naada.rememberedMicrophone"
     public static let sessionTitleKey = "naada.sessionTitle"
     public static let outputFolderPathKey = "naada.outputFolderPath"
 
@@ -43,6 +50,25 @@ public final class SessionSettingsStore {
         }
     }
 
+    /// Choix de microphone mémorisé. La valeur « aucun » efface la clé : une
+    /// installation sans microphone choisi n'écrit rien.
+    public var rememberedMicrophone: MicrophoneChoice {
+        get {
+            guard let data = defaults.data(forKey: Self.rememberedMicrophoneKey) else {
+                return .none
+            }
+            return (try? JSONDecoder().decode(MicrophoneChoice.self, from: data)) ?? .none
+        }
+        set {
+            guard newValue != .none else {
+                defaults.removeObject(forKey: Self.rememberedMicrophoneKey)
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Self.rememberedMicrophoneKey)
+        }
+    }
+
     public var sessionTitle: String {
         get {
             defaults.string(forKey: Self.sessionTitleKey) ?? ""
@@ -57,8 +83,12 @@ public final class SessionSettingsStore {
     }
 
     /// Relit l'état depuis le disque, comme le ferait une nouvelle instance
-    /// de l'application.
+    /// de l'application. Aucune écriture n'est faite ici.
     public func restore() -> SessionSettings {
-        SessionSettings(rememberedSource: rememberedSource, title: sessionTitle)
+        SessionSettings(
+            rememberedSource: rememberedSource,
+            microphone: rememberedMicrophone,
+            title: sessionTitle
+        )
     }
 }

@@ -187,6 +187,94 @@ final class SessionSettingsTests: XCTestCase {
         XCTAssertEqual(relaunch.sessionTitle, "Titre conservé")
     }
 
+    // MARK: - Microphone mémorisé
+
+    func testRememberedMicrophoneRestoresAcrossRelaunch() {
+        let chrome = RememberedSource(bundleIdentifier: "com.google.Chrome", name: "Google Chrome")
+        let microphone = MicrophoneChoice.selected(
+            uid: "AppleUSBAudioEngine:Micro:1234",
+            name: "Micro USB"
+        )
+        let firstLaunch = SessionSettingsStore(defaults: defaults)
+        firstLaunch.rememberedSource = chrome
+        firstLaunch.rememberedMicrophone = microphone
+        firstLaunch.sessionTitle = "Réunion"
+
+        let restored = SessionSettingsStore(defaults: defaults).restore()
+
+        XCTAssertEqual(
+            restored,
+            SessionSettings(rememberedSource: chrome, microphone: microphone, title: "Réunion")
+        )
+        XCTAssertEqual(SessionSettingsStore.rememberedMicrophoneKey, "naada.rememberedMicrophone")
+    }
+
+    func testSystemDefaultMicrophoneRoundTrips() {
+        let store = SessionSettingsStore(defaults: defaults)
+        store.rememberedMicrophone = .systemDefault
+
+        XCTAssertEqual(SessionSettingsStore(defaults: defaults).rememberedMicrophone, .systemDefault)
+    }
+
+    func testClearingMicrophoneKeepsSourceAndTitle() {
+        let safari = RememberedSource(bundleIdentifier: "com.apple.Safari", name: "Safari")
+        let store = SessionSettingsStore(defaults: defaults)
+        store.rememberedSource = safari
+        store.sessionTitle = "Titre conservé"
+        store.rememberedMicrophone = .selected(uid: "uid-1", name: "Micro USB")
+
+        store.rememberedMicrophone = .none
+
+        XCTAssertNil(defaults.data(forKey: SessionSettingsStore.rememberedMicrophoneKey))
+        let restored = SessionSettingsStore(defaults: defaults).restore()
+        XCTAssertEqual(restored.microphone, .none)
+        XCTAssertEqual(restored.rememberedSource, safari)
+        XCTAssertEqual(restored.title, "Titre conservé")
+    }
+
+    func testFirstLoadWritesNoKeyAtAll() throws {
+        let spy = try XCTUnwrap(WriteTrackingDefaults(suiteName: suiteName))
+        let store = SessionSettingsStore(defaults: spy)
+
+        let restored = store.restore()
+
+        XCTAssertEqual(restored, SessionSettings())
+        XCTAssertEqual(restored.microphone, .none)
+        XCTAssertTrue(spy.writtenKeys.isEmpty, "un premier chargement ne doit écrire aucune clé")
+        XCTAssertNil(spy.data(forKey: SessionSettingsStore.rememberedSourceKey))
+        XCTAssertNil(spy.data(forKey: SessionSettingsStore.rememberedMicrophoneKey))
+        XCTAssertNil(spy.string(forKey: SessionSettingsStore.sessionTitleKey))
+    }
+
+    func testWritingMicrophoneNeverTouchesLegacyFolderKey() {
+        let savedFolder = "/tmp/naada-dossier-legacy"
+        defaults.set(savedFolder, forKey: SessionSettingsStore.outputFolderPathKey)
+        let store = SessionSettingsStore(defaults: defaults)
+
+        store.rememberedSource = RememberedSource(
+            bundleIdentifier: "com.google.Chrome",
+            name: "Google Chrome"
+        )
+        store.rememberedMicrophone = .systemDefault
+
+        XCTAssertEqual(
+            defaults.string(forKey: SessionSettingsStore.outputFolderPathKey),
+            savedFolder
+        )
+        XCTAssertNotEqual(
+            SessionSettingsStore.rememberedMicrophoneKey,
+            SessionSettingsStore.rememberedSourceKey
+        )
+        XCTAssertNotEqual(
+            SessionSettingsStore.rememberedMicrophoneKey,
+            SessionSettingsStore.sessionTitleKey
+        )
+        XCTAssertNotEqual(
+            SessionSettingsStore.rememberedMicrophoneKey,
+            SessionSettingsStore.outputFolderPathKey
+        )
+    }
+
     private struct RunningSource {
         let pid: pid_t
         let bundleIdentifier: String?
@@ -204,5 +292,21 @@ final class SessionSettingsTests: XCTestCase {
                 name: $0.name
             )
         }
+    }
+}
+
+/// UserDefaults de test qui retient toute clé écrite, pour prouver qu'un
+/// premier chargement ne modifie rien.
+private final class WriteTrackingDefaults: UserDefaults {
+    private(set) var writtenKeys: [String] = []
+
+    override func set(_ value: Any?, forKey defaultName: String) {
+        writtenKeys.append(defaultName)
+        super.set(value, forKey: defaultName)
+    }
+
+    override func removeObject(forKey defaultName: String) {
+        writtenKeys.append(defaultName)
+        super.removeObject(forKey: defaultName)
     }
 }

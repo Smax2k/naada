@@ -183,7 +183,7 @@ final class RecordingPresetTests: XCTestCase {
         XCTAssertEqual(restored, updated)
         XCTAssertEqual(restored.id, preset.id)
         XCTAssertEqual(restored.name, "Modifié")
-        XCTAssertEqual(restored.source.bundleIdentifier, "com.google.Chrome")
+        XCTAssertEqual(restored.source?.bundleIdentifier, "com.google.Chrome")
         XCTAssertEqual(restored.title, "Titre modifié")
         XCTAssertEqual(restored.folderPath, "/tmp/naada-preset-modifie")
     }
@@ -247,5 +247,133 @@ final class RecordingPresetTests: XCTestCase {
             savedFolder,
             "le magasin de presets ne doit jamais réécrire la clé historique du dossier"
         )
+    }
+
+    // MARK: - Presets relus depuis une version antérieure
+
+    func testLegacyPresetWithoutMicrophoneReadsWithNone() throws {
+        let id = UUID()
+        let json = """
+        [{"id":"\(id.uuidString)","name":"Ancien preset","source":{"bundleIdentifier":"com.apple.Safari","name":"Safari"},"title":"Titre ancien","folderPath":"/tmp/naada-preset-ancien"}]
+        """
+        defaults.set(Data(json.utf8), forKey: RecordingPresetStore.presetsKey)
+
+        let presets = RecordingPresetStore(defaults: defaults).load()
+
+        XCTAssertEqual(presets.count, 1)
+        let preset = try XCTUnwrap(presets.first)
+        XCTAssertEqual(preset.id, id)
+        XCTAssertEqual(preset.name, "Ancien preset")
+        XCTAssertEqual(
+            preset.source,
+            RememberedSource(bundleIdentifier: "com.apple.Safari", name: "Safari")
+        )
+        XCTAssertEqual(preset.microphone, .none)
+        XCTAssertEqual(preset.title, "Titre ancien")
+        XCTAssertEqual(preset.folderPath, "/tmp/naada-preset-ancien")
+    }
+
+    func testLegacyPresetWithoutSourceKeepsTitleAndFolder() throws {
+        let id = UUID()
+        let json = """
+        [{"id":"\(id.uuidString)","name":"Sans application","title":"Titre conservé","folderPath":"/tmp/naada-preset-sans-source"}]
+        """
+        defaults.set(Data(json.utf8), forKey: RecordingPresetStore.presetsKey)
+
+        let presets = RecordingPresetStore(defaults: defaults).load()
+
+        XCTAssertEqual(presets.count, 1, "un preset sans source ne doit pas faire perdre la liste")
+        let preset = try XCTUnwrap(presets.first)
+        XCTAssertNil(preset.source)
+        XCTAssertEqual(preset.microphone, .none)
+        XCTAssertEqual(preset.title, "Titre conservé")
+        XCTAssertEqual(preset.folderPath, "/tmp/naada-preset-sans-source")
+    }
+
+    func testCreateDefaultsToNoSourceAndNoMicrophone() throws {
+        let store = RecordingPresetStore(defaults: defaults)
+        let created = try XCTUnwrap(
+            store.create(name: "Micro seul", title: "Titre", folderPath: nil)
+        )
+
+        XCTAssertNil(created.source)
+        XCTAssertEqual(created.microphone, .none)
+
+        let restored = try XCTUnwrap(RecordingPresetStore(defaults: defaults).load().first)
+        XCTAssertNil(restored.source)
+        XCTAssertEqual(restored.microphone, .none)
+        XCTAssertEqual(restored.title, "Titre")
+    }
+
+    func testCreatePersistsMicrophoneAcrossRelaunch() throws {
+        let microphone = MicrophoneChoice.selected(
+            uid: "AppleUSBAudioEngine:Micro:1234",
+            name: "Micro USB"
+        )
+        let created = try XCTUnwrap(
+            RecordingPresetStore(defaults: defaults).create(
+                name: "Micro USB",
+                microphone: microphone,
+                title: "Voix",
+                folderPath: "/tmp/naada-preset-micro"
+            )
+        )
+
+        let restored = try XCTUnwrap(RecordingPresetStore(defaults: defaults).load().first)
+
+        XCTAssertEqual(restored, created)
+        XCTAssertNil(restored.source)
+        XCTAssertEqual(restored.microphone, microphone)
+        XCTAssertEqual(restored.configuration.microphone, microphone)
+    }
+
+    func testApplyingPresetReplacesSourceAndMicrophone() throws {
+        let usbMicrophone = MicrophoneChoice.selected(
+            uid: "AppleUSBAudioEngine:Micro:1234",
+            name: "Micro USB"
+        )
+        let preset = try XCTUnwrap(
+            RecordingPresetStore(defaults: defaults).create(
+                name: "Micro seul",
+                microphone: usbMicrophone,
+                title: "Voix du preset",
+                folderPath: nil
+            )
+        )
+
+        let applied = preset.applied(
+            to: RecordingConfiguration(
+                source: RememberedSource(bundleIdentifier: "com.apple.Safari", name: "Safari"),
+                microphone: .systemDefault,
+                title: "Ancien titre",
+                folderPath: "/tmp/naada-dossier-courant"
+            )
+        )
+
+        XCTAssertNil(applied.source, "une source absente du preset doit effacer la source courante")
+        XCTAssertEqual(applied.microphone, usbMicrophone)
+        XCTAssertEqual(applied.title, "Voix du preset")
+        XCTAssertEqual(applied.folderPath, "/tmp/naada-dossier-courant")
+    }
+
+    func testApplyingPresetWithNoMicrophoneClearsCurrentMicrophone() throws {
+        let chrome = RememberedSource(bundleIdentifier: "com.google.Chrome", name: "Google Chrome")
+        let preset = try XCTUnwrap(
+            RecordingPresetStore(defaults: defaults).create(
+                name: "Application seule",
+                source: chrome,
+                title: "Écran",
+                folderPath: nil
+            )
+        )
+
+        let applied = preset.applied(
+            to: RecordingConfiguration(
+                microphone: .selected(uid: "AppleUSBAudioEngine:Micro:1234", name: "Micro USB")
+            )
+        )
+
+        XCTAssertEqual(applied.source, chrome)
+        XCTAssertEqual(applied.microphone, .none, "le microphone du preset remplace toujours le courant")
     }
 }
