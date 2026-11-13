@@ -1,0 +1,51 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"projectName\":\"Naada\",\"outputFormat\":\"png\",\"estimate\":{\"amountUsdMicros\":370225,\"amountEurMicros\":334110,\"outputUsdMicros\":41160,\"inputUsdMicros\":329065,\"exchangeRate\":0.90245,\"exchangeRateDate\":\"2026-11-12\",\"exchangeFallback\":false,\"pricingVersion\":\"2026-09-09\",\"pricingSourceUrl\":\"https://developers.openai.com/api/docs/pricing\",\"note\":\"Estimation, pas une facture : entrée texte approximée, provision de 20 000 tokens par référence. auto provisionné en high. Le coût final dépend de l’usage OpenAI et peut dépasser la réservation.\"},\"subscription\":{\"available\":true,\"label\":\"OpenAI hervé\"},\"billing\":\"0 € via l’abonnement ChatGPT (OpenAI hervé) ; sinon 0.3341 € avec la clé API.\",\"user\":{\"limitEurMicros\":null,\"spentEurMicros\":9297410,\"reservedEurMicros\":47968,\"generated\":192,\"uncertain\":1,\"estimated\":6,\"remainingEurMicros\":null},\"project\":{\"limitEurMicros\":null,\"spentEurMicros\":0,\"reservedEurMicros\":0,\"generated\":5,\"uncertain\":0,\"estimated\":0,\"remainingEurMicros\":null},\"exchangeRate\":0.90245,\"exchangeRateDate\":\"2026-11-12\",\"exchangeFallback\":false,\"period\":\"cumulative\"}"
+    }
+  ],
+  "structuredContent": {
+    "projectName": "Naada",
+    "outputFormat": "png",
+    "estimate": {
+      "amountUsdMicros": 370225,
+      "amountEurMicros": 334110,
+      "outputUsdMicros": 41160,
+      "inputUsdMicros": 329065,
+      "exchangeRate": 0.90245,
+      "exchangeRateDate": "2026-11-12",
+      "exchangeFallback": false,
+      "pricingVersion": "2026-09-09",
+      "pricingSourceUrl": "https://developers.openai.com/api/docs/pricing",
+      "note": "Estimation, pas une facture : entrée texte approximée, provision de 20 000 tokens par référence. auto provisionné en high. Le coût final dépend de l’usage OpenAI et peut dépasser la réservation."
+    },
+    "subscription": {
+      "available": true,
+      "label": "OpenAI hervé"
+    },
+    "billing": "0 € via l’abonnement ChatGPT (OpenAI hervé) ; sinon 0.3341 € avec la clé API.",
+    "user": {
+      "limitEurMicros": null,
+      "spentEurMicros": 9297410,
+      "reservedEurMicros": 47968,
+      "generated": 192,
+      "uncertain": 1,
+      "estimated": 6,
+      "remainingEurMicros": null
+    },
+    "project": {
+      "limitEurMicros": null,
+      "spentEurMicros": 0,
+      "reservedEurMicros": 0,
+      "generated": 5,
+      "uncertain": 0,
+      "estimated": 0,
+      "remainingEurMicros": null
+    },
+    "exchangeRate": 0.90245,
+    "exchangeRateDate": "2026-11-12",
+    "exchangeFallback": false,
+    "period": "cumulative"
+  }
+}

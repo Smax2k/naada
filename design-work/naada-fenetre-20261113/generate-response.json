@@ -1,0 +1,47 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"project\":\"Naada\",\"status\":\"generated\",\"path\":\"design-work/naada-fenetre-20261113/mockup.png\",\"outputFormat\":\"png\",\"contentType\":\"image/png\",\"model\":\"gpt-image-2.6-flare\",\"quality\":\"high\",\"size\":\"1536x1024\",\"referenceCount\":2,\"background\":\"opaque\",\"bytes\":1730794,\"generationId\":\"cmweghzay03hdx44u8lu38nmp\",\"estimate\":{\"amountUsdMicros\":370225,\"amountEurMicros\":334110,\"outputUsdMicros\":41160,\"inputUsdMicros\":329065,\"exchangeRate\":0.90245,\"exchangeRateDate\":\"2026-11-12\",\"exchangeFallback\":false,\"pricingVersion\":\"2026-09-09\",\"pricingSourceUrl\":\"https://developers.openai.com/api/docs/pricing\",\"note\":\"Estimation, pas une facture : entrée texte approximée, provision de 20 000 tokens par référence. auto provisionné en high. Le coût final dépend de l’usage OpenAI et peut dépasser la réservation.\"},\"costUsdMicros\":0,\"costEurMicros\":0,\"costSource\":\"subscription\",\"provider\":{\"kind\":\"subscription\",\"label\":\"OpenAI hervé\"},\"effectiveSize\":\"1536x1024\"}\n\nImage générée via abonnement ChatGPT (OpenAI hervé) : 0 €."
+    },
+    {
+      "type": "image",
+      "mimeType": "image/png",
+      "path": "/var/folders/5x/pwmrs8l548b6jtlnck05hxw40000gn/T/agents-worker-skill-ybpxRv/image.png"
+    }
+  ],
+  "structuredContent": {
+    "project": "Naada",
+    "status": "generated",
+    "path": "design-work/naada-fenetre-20261113/mockup.png",
+    "outputFormat": "png",
+    "contentType": "image/png",
+    "model": "gpt-image-2.6-flare",
+    "quality": "high",
+    "size": "1536x1024",
+    "referenceCount": 2,
+    "background": "opaque",
+    "bytes": 1730794,
+    "generationId": "cmweghzay03hdx44u8lu38nmp",
+    "estimate": {
+      "amountUsdMicros": 370225,
+      "amountEurMicros": 334110,
+      "outputUsdMicros": 41160,
+      "inputUsdMicros": 329065,
+      "exchangeRate": 0.90245,
+      "exchangeRateDate": "2026-11-12",
+      "exchangeFallback": false,
+      "pricingVersion": "2026-09-09",
+      "pricingSourceUrl": "https://developers.openai.com/api/docs/pricing",
+      "note": "Estimation, pas une facture : entrée texte approximée, provision de 20 000 tokens par référence. auto provisionné en high. Le coût final dépend de l’usage OpenAI et peut dépasser la réservation."
+    },
+    "costUsdMicros": 0,
+    "costEurMicros": 0,
+    "costSource": "subscription",
+    "provider": {
+      "kind": "subscription",
+      "label": "OpenAI hervé"
+    },
+    "effectiveSize": "1536x1024"
+  }
+}

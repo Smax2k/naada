@@ -1,0 +1,341 @@
+{
+  "id": "naada-fenetre-20261113",
+  "task": "UNE seule maquette IMGEN de la fenêtre Naada macOS native au repos, même composition clair à gauche / sombre à droite dans une image, icône existante réutilisée en haut à gauche.",
+  "date": "2026-11-13",
+  "status": "image_generated_pending_explicit_approval",
+  "baseline": {
+    "head": "3206f9f19e9a3aa3d0cc7d4ba395f521be3c2f57",
+    "gitStatusShort": ""
+  },
+  "scope": {
+    "authorizedPaths": [
+      "design-work/naada-fenetre-20261113/brief.md",
+      "design-work/naada-fenetre-20261113/prompt.txt",
+      "design-work/naada-fenetre-20261113/manifest.json",
+      "design-work/naada-fenetre-20261113/mockup.png",
+      "design-work/naada-fenetre-20261113/estimate-request.json",
+      "design-work/naada-fenetre-20261113/estimate-response.json",
+      "design-work/naada-fenetre-20261113/generate-response.json",
+      "design-work/naada-fenetre-20261113/references/naada-light-full.png",
+      "design-work/naada-fenetre-20261113/references/naada-dark-full.png"
+    ],
+    "excluded": [
+      "Sources/",
+      "Tests/",
+      "Package.swift",
+      "packaging/",
+      "scripts/",
+      "docs/",
+      ".gitignore",
+      "README",
+      "build",
+      "tests",
+      "check.sh",
+      "lancement Naada",
+      "installation",
+      "screenshot",
+      "capture audio",
+      "TCC",
+      "permission",
+      "commit",
+      "push",
+      "publication",
+      "modification de /Applications/Naada.app"
+    ]
+  },
+  "references": [
+    {
+      "path": "design-work/naada-fenetre-20261113/references/naada-light-full.png",
+      "copiedFrom": "packaging/AppIcon.icon/Assets/naada-light-full.png",
+      "role": "Marque isolée uniquement : icône claire. Pas une capture, pas un ancrage de composition.",
+      "dimensions": "1024x1024",
+      "sha256": "b5600b6207d89714003d219a8853c5e39c41fab9826afae65f051e86f53b4177",
+      "copyCheck": "cmp identique à l'original, exit 0"
+    },
+    {
+      "path": "design-work/naada-fenetre-20261113/references/naada-dark-full.png",
+      "copiedFrom": "packaging/AppIcon.icon/Assets/naada-dark-full.png",
+      "role": "Marque isolée uniquement : icône sombre. Pas une capture, pas un ancrage de composition.",
+      "dimensions": "1024x1024",
+      "sha256": "d3d2acc8983eb28ec60dcf5a22ed1b5126b28a7944cd490e83958be33292712b",
+      "copyCheck": "cmp identique à l'original, exit 0"
+    }
+  ],
+  "promptControl": {
+    "reviewedBeforeEstimate": true,
+    "reviewedAt": "2026-11-13, avant imgen_estimate",
+    "promptPath": "design-work/naada-fenetre-20261113/prompt.txt",
+    "referencesReviewed": [
+      "design-work/naada-fenetre-20261113/references/naada-light-full.png",
+      "design-work/naada-fenetre-20261113/references/naada-dark-full.png"
+    ],
+    "scope": "Une image, deux occurrences de la même fenêtre et une légende hors fenêtre. Aucun autre écran, aucune capture, aucun asset.",
+    "composition": "Trois directions explorées, une retenue (console à deux entrées). Aucune capture de fenêtre, aucune transcription du VStack actuel.",
+    "content": "Libellés existants repris de Localizable.strings, ajouts marqués Proposition, textes et états interdits absents.",
+    "privacy": "Références = deux icônes 1024x1024 seulement. Aucun auteur/créateur/provenance dans les métadonnées, aucune capture, aucun bureau, aucun nom réel, aucun chemin, aucune donnée privée.",
+    "brand": "Icône réutilisée, non redessinée ; palette dérivée des références ; aplat de l'icône interdit comme fond de fenêtre.",
+    "lightDark": "Même composition, deux apparences ; pas deux maquettes.",
+    "native": "SF Pro, contrôles macOS, fenêtre isolée, pas de site.",
+    "result": "pass"
+  },
+  "preEstimationControl": {
+    "performedAt": "2026-11-13, avant estimation IMGEN",
+    "scope": "Une image, deux occurrences de la même fenêtre et une légende hors fenêtre ; aucun autre écran, aucune capture, aucun asset.",
+    "composition": "Trois directions explorées, une retenue (console à deux entrées) ; aucune capture de fenêtre ni transcription du VStack actuel.",
+    "content": "Textes existants repris de Localizable.strings ; ajouts marqués Proposition ; textes interdits absents.",
+    "privacy": "Références = deux icônes 1024x1024 seulement, sans métadonnées personne/creator/whereFroms, sans capture, sans bureau, sans nom réel, sans chemin.",
+    "brand": "Icône réutilisée non redessinée ; palette dérivée des références ; aplat de l'icône interdit comme fond de fenêtre.",
+    "lightDark": "Même composition, deux apparences ; pas deux maquettes.",
+    "native": "SF Pro, contrôles macOS, fenêtre isolée, pas de site.",
+    "blockingRules": "Abonnement indisponible : blocked sans fichier factice. Rendu illisible, marque redessinée, rendu site ou deux DA : arrêt signalé, sans régénération."
+  },
+  "directionsExplored": [
+    "Inspecteur macOS : rail latéral et détail, rejeté car les réglages passent avant la capture et le rendu glisse vers le tableau de bord.",
+    "Console à deux entrées : composition asymétrique native, temps et action dominants, entrées application/microphone lisibles comme un mélangeur, session en retrait. Retenue.",
+    "Magnétophone vertical épuré : trop proche d'un VStack recollé, risque de wireframe calqué sur l'existant."
+  ],
+  "chosenDirection": "Console à deux entrées, une seule direction artistique, déclinée en clair et sombre avec composition identique.",
+  "state": {
+    "phase": "Repos",
+    "timer": "00:00",
+    "application": "Aucune application",
+    "microphone": "Aucun",
+    "outputFolder": "Aucun dossier choisi",
+    "sessionTitle": "placeholder Réunion, cours, appel…",
+    "presets": "fermé",
+    "recordButton": "Enregistrer, inactif, seul bouton inactif",
+    "forbidden": [
+      "menu ouvert",
+      "popover",
+      "erreur",
+      "dernier fichier",
+      "invite système",
+      "permission accordée",
+      "nom réel d'application ou d'appareil",
+      "chemin",
+      "autre horaire que 00:00"
+    ]
+  },
+  "proposedVsExisting": {
+    "existing": [
+      "Naada",
+      "Enregistreur de session audio",
+      "Repos",
+      "Application source",
+      "Dossier de sortie",
+      "Aucun dossier choisi",
+      "Choisir…",
+      "Titre de session",
+      "Réunion, cours, appel…",
+      "Enregistrer",
+      "Aucun démarrage automatique.",
+      "Presets"
+    ],
+    "proposed": [
+      "Ligne Microphone avec état Aucun.",
+      "Options Aucun, Microphone système par défaut, Microphone spécifique.",
+      "État Aucune application dans le choix d'application (le code actuel utilise Choisir une application…).",
+      "Modes application seule / microphone seul / application + microphone.",
+      "Mémorisation du microphone choisi dans les presets.",
+      "Détail Aucune application ni microphone. Choisissez l'un, l'autre, ou les deux.",
+      "Pied Audio uniquement · aucune image · aucun démarrage automatique.",
+      "Note macOS peut demander l'accès au microphone seulement si un microphone est choisi. Aucune image n'est capturée, le son reste audible, et aucune capture ne démarre avant votre clic.",
+      "Légende hors fenêtre marquée Proposition."
+    ],
+    "note": "Les éléments proposés ne sont pas existants dans Naada aujourd'hui. La maquette les montre comme proposition, pas comme une fausse UI déjà livrée. Aucun Swift n'est écrit."
+  },
+  "texts": {
+    "existing": [
+      "Naada",
+      "Enregistreur de session audio",
+      "Repos",
+      "Application source",
+      "Dossier de sortie",
+      "Aucun dossier choisi",
+      "Choisir…",
+      "Titre de session",
+      "Réunion, cours, appel…",
+      "Enregistrer",
+      "Aucun démarrage automatique.",
+      "Presets"
+    ],
+    "proposed": [
+      "Microphone",
+      "Aucun",
+      "Aucune application",
+      "Aucune application ni microphone. Choisissez l'un, l'autre, ou les deux.",
+      "Audio uniquement · aucune image · aucun démarrage automatique.",
+      "macOS peut demander l'accès au microphone seulement si un microphone est choisi. Aucune image n'est capturée, le son reste audible, et aucune capture ne démarre avant votre clic.",
+      "Microphone : Aucun, Microphone système par défaut, Microphone spécifique. Application seule, microphone seul, ou les deux ; le microphone choisi est mémorisé dans les presets."
+    ],
+    "proposedFeatures": [
+      "Choix microphone : Aucun, Microphone système par défaut, Microphone spécifique (non existant).",
+      "État Aucune application dans le choix d'application (non existant ; le code actuel utilise Choisir une application…).",
+      "Modes application seule / microphone seul / application + microphone (non existants).",
+      "Mémorisation du microphone dans les presets (non existante).",
+      "Détail, pied de fenêtre et note de permission proposés (non existants)."
+    ],
+    "forbidden": [
+      "Application audio only · no microphone · no images · sound stays audible.",
+      "Capture audio de l'application uniquement",
+      "Choisir une application…",
+      "Aucune source sélectionnée",
+      "Choisissez une application source"
+    ]
+  },
+  "imgen": {
+    "status": "generated",
+    "generationCount": 1,
+    "retry": false,
+    "model": "gpt-image-2.6-flare",
+    "quality": "high",
+    "requestedSize": "1536x1024",
+    "outputFormat": "png",
+    "background": "opaque",
+    "outputPath": "design-work/naada-fenetre-20261113/mockup.png",
+    "referencePaths": [
+      "design-work/naada-fenetre-20261113/references/naada-light-full.png",
+      "design-work/naada-fenetre-20261113/references/naada-dark-full.png"
+    ],
+    "referenceCount": 2,
+    "project": "/Volumes/NVME1To/Projets/naada",
+    "generationId": "cmweghzay03hdx44u8lu38nmp",
+    "effectiveSize": "1536x1024",
+    "provider": {
+      "kind": "subscription",
+      "label": "OpenAI hervé"
+    },
+    "estimateRequestPath": "design-work/naada-fenetre-20261113/estimate-request.json",
+    "estimateResponsePath": "design-work/naada-fenetre-20261113/estimate-response.json",
+    "generateResponsePath": "design-work/naada-fenetre-20261113/generate-response.json"
+  },
+  "image": {
+    "path": "design-work/naada-fenetre-20261113/mockup.png",
+    "format": "png",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1730794,
+    "sha256": "ac5ae24161cf01bc9d75337ec5e1a351263c13b1aed382c429793df5a5070804",
+    "effectiveSize": "1536x1024",
+    "generationId": "cmweghzay03hdx44u8lu38nmp"
+  },
+  "cost": {
+    "subscription": {
+      "available": true,
+      "label": "OpenAI hervé",
+      "announcedBeforeGenerate": true,
+      "generationIncluded": true
+    },
+    "estimate": {
+      "amountUsdMicros": 370225,
+      "amountEurMicros": 334110,
+      "amountUsd": 0.370225,
+      "amountEur": 0.33411,
+      "outputUsdMicros": 41160,
+      "inputUsdMicros": 329065,
+      "exchangeRate": 0.90245,
+      "exchangeRateDate": "2026-11-12",
+      "exchangeFallback": false,
+      "pricingVersion": "2026-09-09",
+      "note": "Estimation, pas une facture : entrée texte approximée, provision de 20 000 tokens par référence. auto provisionné en high. Le coût final dépend de l'usage OpenAI et peut dépasser la réservation."
+    },
+    "actual": {
+      "costUsdMicros": 0,
+      "costEurMicros": 0,
+      "costUsd": 0,
+      "costEur": 0,
+      "costSource": "subscription",
+      "providerKind": "subscription",
+      "providerLabel": "OpenAI hervé",
+      "note": "Génération couverte par l'abonnement ChatGPT connecté. Aucun coût facturé, aucune clé API employée."
+    },
+    "conversion": {
+      "estimateUsd": "370225 / 1000000 = 0,370225 $",
+      "estimateEur": "334110 / 1000000 = 0,334110 €",
+      "actualUsd": "0 / 1000000 = 0 $",
+      "actualEur": "0 / 1000000 = 0 €"
+    }
+  },
+  "diagnostic": {
+    "transformation": "Réelle mais contenue : surface unifiée sans cartes, regroupement entrées application/microphone en haut avec accolade et '+', minuterie centrale dominante, session regroupée, action et presets en pied. La composition reste verticale et plus conservatrice que l'asymétrie 'console' visée ; le bracket de mixage est lisible mais discret. Ce n'est pas un site et ce n'est pas une simple retouche de fond ou de marges.",
+    "composition": "Deux fenêtres isolées côte à côte, même taille et même composition, clair à gauche et sombre à droite. La fenêtre est native, sans bureau ni chrome navigateur. Le rapport large 3:2 laisse respirer les deux fenêtres et la légende.",
+    "hierarchie": "00:00 et le bouton Enregistrer dominent ; les deux entrées sont secondaires et se lisent comme un petit mélangeur ; la session est tertiaire ; la note et le pied ferment la lecture. Enregistrer est le seul bouton inactif.",
+    "lisibilite": "SF Pro, textes nets, contrastes corrects en clair et en sombre. La note de permission et la légende hors fenêtre restent lisibles. Aucun débordement ni collision visible.",
+    "marque": "Icône existante reprise en haut à gauche dans les deux coloris, même motif d'anneaux et même découpe diagonale. Le rendu IMGEN à petite taille simplifie légèrement la finesse des anneaux et du centre : fidèle au motif, non pixel-identique, pas un logo différent. Les aplats de l'icône ne sont pas utilisés comme fond de fenêtre. Accent sarcelle/menthe limité au point d'état, aux graduations et à l'icône.",
+    "clairSombre": "Même composition, mêmes positions et mêmes contrôles ; seule l'apparence change. Pas deux maquettes ni deux directions artistiques. Le fond sombre est graphite neutre, pas l'aplat sarcelle de l'icône.",
+    "natif": "Barre de titre macOS, feux de circulation, pop-up, champ, boutons et séparateurs natifs ; pas de hero, pas de grille de cartes marketing, pas de navigation de site.",
+    "textualDeviations": [
+      {
+        "expected": "Réunion, cours, appel…",
+        "observed": "Réunion, cours, appel...",
+        "kind": "ellipse U+2026 rendue en trois points",
+        "action": "signalé, aucun retry"
+      },
+      {
+        "expected": "Choisir…",
+        "observed": "Choisir...",
+        "kind": "ellipse U+2026 rendue en trois points",
+        "action": "signalé, aucun retry"
+      }
+    ],
+    "textualDeviationsNote": "Écarts cosmétiques seulement ; tous les autres libellés demandés sont présents et lisibles. Aucune régénération, aucune retouche.",
+    "compositionGap": "La composition reste plus verticale que l'asymétrie envisagée ; à signaler pour la revue, sans régénération silencieuse.",
+    "siteOrTwoDirections": false,
+    "needsSwiftOrLaunchOrRegeneration": false
+  },
+  "checks": [
+    {
+      "command": "test -s design-work/naada-fenetre-20261113/mockup.png && file design-work/naada-fenetre-20261113/mockup.png",
+      "result": "exit 0 ; PNG image data, 1536 x 1024, 8-bit/color RGB, non-interlaced"
+    },
+    {
+      "command": "sips -g pixelWidth -g pixelHeight -g format design-work/naada-fenetre-20261113/mockup.png",
+      "result": "1536 x 1024, png"
+    },
+    {
+      "command": "cmp design-work/naada-fenetre-20261113/references/naada-light-full.png packaging/AppIcon.icon/Assets/naada-light-full.png",
+      "result": "exit 0, identique"
+    },
+    {
+      "command": "cmp design-work/naada-fenetre-20261113/references/naada-dark-full.png packaging/AppIcon.icon/Assets/naada-dark-full.png",
+      "result": "exit 0, identique"
+    },
+    {
+      "command": "git status --short -- Sources Tests Package.swift packaging scripts docs .gitignore",
+      "result": "vide, exit 0"
+    },
+    {
+      "command": "git status --porcelain",
+      "result": "?? design-work/ uniquement"
+    },
+    {
+      "command": "git diff --quiet HEAD -- Sources/Naada/ContentView.swift packaging/fr.lproj/Localizable.strings",
+      "result": "exit 0, aucun diff"
+    },
+    {
+      "command": "git rev-parse HEAD",
+      "result": "3206f9f19e9a3aa3d0cc7d4ba395f521be3c2f57"
+    },
+    {
+      "command": "git diff --name-only",
+      "result": "vide"
+    },
+    {
+      "command": "git ls-files --others --exclude-standard",
+      "result": "uniquement les 9 fichiers de design-work/naada-fenetre-20261113/"
+    }
+  ],
+  "limitations": [
+    "Maquette visuelle uniquement : aucune capture réelle, aucun lancement de Naada, aucune vérification de fonctionnement de la future fonctionnalité microphone.",
+    "Aucun Swift, aucun build, aucun test, aucun check.sh, aucune installation, aucun TCC, aucune permission, aucun screenshot d'application.",
+    "Les écarts typographiques cosmétiques sur les ellipses sont signalés sans retry ni régénération.",
+    "La composition reste verticale, plus conservatrice que l'asymétrie envisagée ; signalée pour la revue.",
+    "La fidélité de l'icône à petite taille est une interprétation IMGEN fidèle mais non pixel-identique ; ce n'est pas un autre logo.",
+    "L'approbation explicite de Jonathan reste requise. Une absence de réponse ne vaut pas validation.",
+    "Aucun commit, aucun push, aucune publication."
+  ],
+  "approval": {
+    "status": "pending_explicit_approval",
+    "note": "Travail arrêté à l'image. Aucune intégration, aucun commit, aucune nouvelle version. L'accord de Jonathan doit être explicite."
+  }
+}
