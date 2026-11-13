@@ -1,14 +1,18 @@
 import NaadaCore
 import SwiftUI
 
-/// Jauge du son réellement capté par le moteur.
+/// Jauge du son réellement capté par le moteur, dessinée en segments.
 ///
-/// Elle n'a aucun mouvement propre : sa valeur vient des mesures RMS publiées
-/// par `RecorderViewModel` pendant l'enregistrement, et retombe à zéro à
-/// l'arrêt. Au repos, elle reste vide et affiche « Repos ».
+/// Elle n'a aucun mouvement propre : ses segments s'allument selon les mesures
+/// RMS publiées par `RecorderViewModel` pendant l'enregistrement, et la jauge
+/// retombe vide à l'arrêt. Au repos, aucun segment n'est allumé.
 struct AudioLevelView: View {
     let level: Float
     let isActive: Bool
+
+    /// Nombre de segments de la jauge ; le remplissage suit toujours la même
+    /// mesure RMS publiée par `RecorderViewModel`.
+    private let segmentCount = 38
 
     private var hasSignal: Bool {
         isActive && !AudioLevel.isSilent(level)
@@ -18,21 +22,9 @@ struct AudioLevelView: View {
         isActive ? CGFloat(AudioLevel.meterFraction(level)) : 0
     }
 
-    private var stateLabel: String {
-        guard isActive else { return NSLocalizedString("Idle", comment: "Audio level idle state") }
-        return hasSignal
-            ? NSLocalizedString("Sound received", comment: "Audio level receiving sound")
-            : NSLocalizedString("Silence", comment: "Audio level silent state")
-    }
-
-    private var stateDetail: String {
-        guard isActive else {
-            return NSLocalizedString("No capture in progress", comment: "Audio level inactive detail")
-        }
-        guard hasSignal else {
-            return NSLocalizedString("No sound detected", comment: "Audio level silent detail")
-        }
-        return "\(decibels) dB"
+    private var litSegments: Int {
+        guard fraction > 0 else { return 0 }
+        return min(segmentCount, Int((fraction * CGFloat(segmentCount)).rounded(.up)))
     }
 
     private var decibels: Int {
@@ -57,50 +49,19 @@ struct AudioLevelView: View {
         )
     }
 
-    private var tint: Color {
-        hasSignal ? .red : .secondary
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Image(systemName: isActive ? "waveform" : "waveform.slash")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(stateLabel)
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer(minLength: 8)
-                Text(stateDetail)
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 7) {
+            ForEach(0..<segmentCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(
+                        index < litSegments
+                            ? AnyShapeStyle(Color.red)
+                            : AnyShapeStyle(Color(nsColor: .quaternaryLabelColor).opacity(0.35))
+                    )
+                    .frame(maxWidth: .infinity)
             }
-            .foregroundStyle(tint)
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous)
-                        .fill(Color(nsColor: .quaternaryLabelColor).opacity(0.35))
-
-                    Capsule(style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.red.opacity(0.55), Color.red],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: proxy.size.width * fraction)
-                }
-            }
-            .frame(height: 9)
-            .accessibilityHidden(true)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.primary.opacity(isActive ? 0.045 : 0.025))
-        )
+        .frame(height: 22)
         .accessibilityRepresentation {
             ProgressView(value: Double(fraction), total: 1) {
                 Text(String(

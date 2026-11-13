@@ -5,6 +5,8 @@ struct ContentView: View {
     @StateObject private var model: RecorderViewModel
     @State private var isPresetManagerPresented = false
     private let settingActionWidth: CGFloat = 88
+    private let refreshActionWidth: CGFloat = 26
+    private let recordButtonWidth: CGFloat = 300
 
     @MainActor
     init(model: RecorderViewModel? = nil) {
@@ -12,20 +14,36 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
             header
-            settingsCard
-            recorderCard
+            separator
+
+            sourcesSection
+            separator
+
+            recorderSection
+            separator
+
+            sessionSection
+            separator
+
+            actionSection
 
             if let error = model.errorMessage {
                 errorCard(error)
+                    .padding(.top, 14)
             }
 
             if let url = model.lastOutputURL {
                 outputCard(url)
+                    .padding(.top, 14)
             }
 
+            separator
+                .padding(.top, 16)
+
             footer
+                .padding(.top, 14)
         }
         .padding(24)
         .frame(width: 620)
@@ -33,6 +51,12 @@ struct ContentView: View {
         .onAppear {
             (NSApp.delegate as? AppDelegate)?.model = model
         }
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.6))
+            .frame(height: 1)
     }
 
     private var header: some View {
@@ -49,11 +73,9 @@ struct ContentView: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
-                statusPill
-                presetControl
-            }
+            statusPill
         }
+        .padding(.bottom, 14)
     }
 
     private var statusPill: some View {
@@ -91,73 +113,147 @@ struct ContentView: View {
         }
     }
 
-    private var settingsCard: some View {
+    /// Console à deux entrées : l'application et le microphone forment un seul
+    /// bloc, reliés par une accolade purement décorative (aucun contrôle inerte).
+    private var sourcesSection: some View {
         VStack(spacing: 0) {
             settingRow(icon: "app", title: NSLocalizedString("Source application", comment: "Source picker row title")) {
-                HStack(spacing: 8) {
-                    Picker("", selection: $model.selectedApplicationID) {
-                        Text(NSLocalizedString("No application", comment: "Source picker no application"))
-                            .tag(RememberedSource?.none)
-                        ForEach(model.applications) { application in
-                            Text(application.name)
-                                .tag(RememberedSource?.some(application.rememberedSource))
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .disabled(model.isBusy)
-
-                    Button {
-                        model.refreshApplications()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(NSLocalizedString("Refresh the list of open applications", comment: "Refresh applications tooltip"))
-                    .frame(width: settingActionWidth, alignment: .trailing)
-                    .disabled(model.isBusy)
-                }
+                applicationPicker
             }
-
-            Divider().padding(.leading, 42)
 
             settingRow(icon: "mic", title: NSLocalizedString("Microphone", comment: "Microphone picker row title")) {
-                HStack(spacing: 8) {
-                    Picker("", selection: $model.selectedMicrophone) {
-                        Text(NSLocalizedString("No microphone", comment: "No microphone choice"))
-                            .tag(MicrophoneChoice.none)
-                        Text(model.systemDefaultMicrophoneLabel)
-                            .tag(MicrophoneChoice.systemDefault)
-                        ForEach(model.microphones) { microphone in
-                            Text(microphoneLabel(microphone))
-                                .tag(microphone.choice)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .disabled(model.isBusy)
+                microphonePicker
+            }
+        }
+        .padding(.trailing, 18)
+        .overlay(alignment: .trailing) {
+            SourceListBrace()
+                .stroke(
+                    Color(nsColor: .separatorColor).opacity(0.9),
+                    style: StrokeStyle(lineWidth: 1, lineCap: .round)
+                )
+                .frame(width: 9)
+                .padding(.vertical, 10)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, 8)
+    }
 
-                    Button {
-                        model.refreshMicrophones()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(NSLocalizedString("Refresh the list of microphones", comment: "Refresh microphones tooltip"))
-                    .frame(width: settingActionWidth, alignment: .trailing)
-                    .disabled(model.isBusy)
+    private var applicationPicker: some View {
+        HStack(spacing: 8) {
+            Picker("", selection: $model.selectedApplicationID) {
+                Text(NSLocalizedString("No application", comment: "Source picker no application"))
+                    .tag(RememberedSource?.none)
+                ForEach(model.applications) { application in
+                    Text(application.name)
+                        .tag(RememberedSource?.some(application.rememberedSource))
                 }
             }
+            .labelsHidden()
+            .accessibilityLabel(Text(NSLocalizedString("Source application", comment: "Source picker row title")))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .disabled(model.isBusy)
 
-            Divider().padding(.leading, 42)
+            Button {
+                model.refreshApplications()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help(NSLocalizedString("Refresh the list of open applications", comment: "Refresh applications tooltip"))
+            .frame(width: refreshActionWidth, alignment: .trailing)
+            .disabled(model.isBusy)
+        }
+    }
 
-            settingRow(icon: "folder", title: NSLocalizedString("Output folder", comment: "Output folder row title")) {
+    private var microphonePicker: some View {
+        HStack(spacing: 8) {
+            Picker("", selection: $model.selectedMicrophone) {
+                Text(NSLocalizedString("No microphone", comment: "No microphone choice"))
+                    .tag(MicrophoneChoice.none)
+                Text(model.systemDefaultMicrophoneLabel)
+                    .tag(MicrophoneChoice.systemDefault)
+                ForEach(model.microphones) { microphone in
+                    Text(microphoneLabel(microphone))
+                        .tag(microphone.choice)
+                }
+            }
+            .labelsHidden()
+            .accessibilityLabel(Text(NSLocalizedString("Microphone", comment: "Microphone picker row title")))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .disabled(model.isBusy)
+
+            Button {
+                model.refreshMicrophones()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help(NSLocalizedString("Refresh the list of microphones", comment: "Refresh microphones tooltip"))
+            .frame(width: refreshActionWidth, alignment: .trailing)
+            .disabled(model.isBusy)
+        }
+    }
+
+    /// Minuterie dominante et centrée, puis la phrase d'état et la jauge : la
+    /// capture se lit avant les réglages de session.
+    private var recorderSection: some View {
+        VStack(spacing: 9) {
+            Text(model.elapsedText)
+                .font(.system(size: 54, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .accessibilityIdentifier("elapsedTime")
+
+            HStack(spacing: 8) {
+                if model.phase.isRecording {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 9, height: 9)
+                }
+                Text(recordingHeadline)
+                    .font(.system(size: 14, weight: .semibold))
+            }
+
+            Text(statusDetail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            AudioLevelView(level: model.audioLevel, isActive: model.phase.isRecording)
+                .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+    }
+
+    private var sessionSection: some View {
+        VStack(spacing: 0) {
+            settingRow(icon: nil, title: NSLocalizedString("Session title", comment: "Session title row title")) {
+                TextField(NSLocalizedString("Meeting, class, call…", comment: "Session title placeholder"), text: $model.sessionTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: .infinity)
+                    .disabled(model.isBusy)
+            }
+
+            settingRow(icon: nil, title: NSLocalizedString("Output folder", comment: "Output folder row title")) {
                 HStack(spacing: 8) {
                     Text(folderDisplay)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(model.outputFolder == nil ? .secondary : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color(nsColor: .textBackgroundColor))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(Color(nsColor: .separatorColor).opacity(0.7))
+                        )
 
                     Button(NSLocalizedString("Choose…", comment: "Choose output folder button")) {
                         model.chooseOutputFolder()
@@ -166,93 +262,72 @@ struct ContentView: View {
                     .disabled(model.isBusy)
                 }
             }
-
-            Divider().padding(.leading, 42)
-
-            settingRow(icon: "textformat", title: NSLocalizedString("Session title", comment: "Session title row title")) {
-                TextField(NSLocalizedString("Meeting, class, call…", comment: "Session title placeholder"), text: $model.sessionTitle)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
-                    .disabled(model.isBusy)
-            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .background(cardBackground)
+        .padding(.vertical, 8)
     }
 
-    private var recorderCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 20) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(model.elapsedText)
-                        .font(.system(size: 46, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
+    /// Rangée d'action : les presets à gauche, l'enregistrement au centre, et
+    /// l'aide au repos juste dessous.
+    private var actionSection: some View {
+        VStack(spacing: 9) {
+            ZStack {
+                recordControl
 
-                    HStack(spacing: 8) {
-                        if model.phase.isRecording {
-                            Circle()
-                                .fill(Color.red)
-                                .frame(width: 9, height: 9)
-                        }
-                        Text(recordingHeadline)
-                            .font(.system(size: 14, weight: .semibold))
-                    }
-
-                    Text(statusDetail)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    if model.canStop {
-                        Button {
-                            model.stopRecording()
-                        } label: {
-                            Label(NSLocalizedString("Stop", comment: "Stop recording button"), systemImage: "stop.fill")
-                                .frame(minWidth: 126)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                        .controlSize(.large)
-                    } else if model.isBusy {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(model.phase == .stopping
-                                ? NSLocalizedString("Finalizing…", comment: "Stop in progress")
-                                : NSLocalizedString("Preparing…", comment: "Start in progress"))
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(minWidth: 126)
-                    } else {
-                        Button {
-                            model.startRecording()
-                        } label: {
-                            Label(NSLocalizedString("Record", comment: "Start recording button"), systemImage: "record.circle")
-                                .frame(minWidth: 126)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                        .controlSize(.large)
-                        .disabled(!model.canStart)
-                    }
-
-                    Text(recorderHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 0) {
+                    presetControl
+                    Spacer(minLength: 0)
                 }
             }
+            .frame(maxWidth: .infinity)
 
-            AudioLevelView(level: model.audioLevel, isActive: model.phase.isRecording)
+            Text(recorderHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-        .padding(18)
-        .background(cardBackground)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+    }
+
+    @ViewBuilder
+    private var recordControl: some View {
+        if model.canStop {
+            Button {
+                model.stopRecording()
+            } label: {
+                Label(NSLocalizedString("Stop", comment: "Stop recording button"), systemImage: "stop.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .controlSize(.large)
+            .frame(width: recordButtonWidth)
+        } else if model.isBusy {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(model.phase == .stopping
+                    ? NSLocalizedString("Finalizing…", comment: "Stop in progress")
+                    : NSLocalizedString("Preparing…", comment: "Start in progress"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: recordButtonWidth)
+        } else {
+            Button {
+                model.startRecording()
+            } label: {
+                Label(NSLocalizedString("Record", comment: "Start recording button"), systemImage: "record.circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .controlSize(.large)
+            .frame(width: recordButtonWidth)
+            .disabled(!model.canStart)
+        }
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -545,15 +620,20 @@ struct ContentView: View {
     }
 
     private func settingRow<Content: View>(
-        icon: String,
+        icon: String?,
         title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+            } else {
+                Color.clear
+                    .frame(width: 20, height: 1)
+            }
             Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -563,5 +643,45 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 11)
+    }
+}
+
+/// Accolade discrète reliant les deux listes d'entrée. Purement décorative :
+/// aucun clic, aucune cible, rien qui promette une action inexistante.
+private struct SourceListBrace: Shape {
+    func path(in rect: CGRect) -> Path {
+        let width = rect.width
+        let height = rect.height
+        let spineX = width * 0.62
+        let curl: CGFloat = 5
+        let middle = rect.midY
+
+        var path = Path()
+        guard height > 24 else {
+            path.move(to: CGPoint(x: spineX, y: rect.minY))
+            path.addLine(to: CGPoint(x: spineX, y: rect.maxY))
+            return path
+        }
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: spineX, y: rect.minY + curl),
+            control: CGPoint(x: spineX, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: spineX, y: middle - curl))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: middle),
+            control: CGPoint(x: rect.maxX, y: middle - curl + 1)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: spineX, y: middle + curl),
+            control: CGPoint(x: rect.maxX, y: middle + curl - 1)
+        )
+        path.addLine(to: CGPoint(x: spineX, y: rect.maxY - curl))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY),
+            control: CGPoint(x: spineX, y: rect.maxY)
+        )
+        return path
     }
 }
