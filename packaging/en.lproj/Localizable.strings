@@ -110,3 +110,40 @@
 "No available file name was found for this recording." = "No available file name was found for this recording.";
 "Naada is not receiving audio from “%@”. The selected process is not playing sound. Start playback and check that the application is not muted." = "Naada is not receiving audio from “%@”. The selected process is not playing sound. Start playback and check that the application is not muted.";
 "No audio has arrived from “%@” yet. Start playback and check that the application is not muted. Naada also captures the application's audio helper processes." = "No audio has arrived from “%@” yet. Start playback and check that the application is not muted. Naada also captures the application's audio helper processes.";
+
+"The selected microphone is no longer available." = "The selected microphone is no longer available.";
+"Microphone access was denied." = "Microphone access was denied.";
+"The microphone could not be opened (error %d)." = "The microphone could not be opened (error %d).";
+"The microphone format could not be read (error %d)." = "The microphone format could not be read (error %d).";
+"Select an application, a microphone, or both before recording." = "Select an application, a microphone, or both before recording.";
+"Microphone access is not allowed. Allow it in System Settings, then try again." = "Microphone access is not allowed. Allow it in System Settings, then try again.";
+"The microphone could not be opened." = "The microphone could not be opened.";
+"The microphone's audio format could not be read." = "The microphone's audio format could not be read.";
+"The microphone could not start capturing audio." = "The microphone could not start capturing audio.";
+
+"No application" = "No application";
+"Microphone" = "Microphone";
+"No microphone" = "No microphone";
+"System default microphone" = "System default microphone";
+"System default microphone (%@)" = "System default microphone (%@)";
+"Refresh the list of microphones" = "Refresh the list of microphones";
+"%@ (unavailable)" = "%@ (unavailable)";
+"Choose an application, a microphone, or both." = "Choose an application, a microphone, or both.";
+"The selected microphone “%@” is not available. Choose another microphone." = "The selected microphone “%@” is not available. Choose another microphone.";
+"Choose an output folder for %@ and the microphone “%@”." = "Choose an output folder for %@ and the microphone “%@”.";
+"Choose an output folder for the microphone “%@”." = "Choose an output folder for the microphone “%@”.";
+"Ready to record audio from %@ and the microphone “%@”." = "Ready to record audio from %@ and the microphone “%@”.";
+"Ready to record audio from the microphone “%@”." = "Ready to record audio from the microphone “%@”.";
+"Recording %@ and the microphone “%@”" = "Recording %@ and the microphone “%@”";
+"%@ and the microphone “%@”" = "%@ and the microphone “%@”";
+"Recording the microphone “%@”" = "Recording the microphone “%@”";
+"Microphone “%@”" = "Microphone “%@”";
+"No audio has arrived from microphone “%@” yet. Check that it is not muted and that macOS input is working." = "No audio has arrived from microphone “%@” yet. Check that it is not muted and that macOS input is working.";
+"No source" = "No source";
+"The preset remembers the selected application, microphone, title and folder shown in the main window." = "The preset remembers the selected application, microphone, title and folder shown in the main window.";
+"Choose an application or a microphone first, outside recording." = "Choose an application or a microphone first, outside recording.";
+
+"Audio only · no images · no automatic start." = "Audio only · no images · no automatic start.";
+"Microphone access is requested only when a microphone is selected, and only after you click Record. macOS may also ask for permission to record system audio. No images are captured, sound stays audible, and no capture starts before your click." = "Microphone access is requested only when a microphone is selected, and only after you click Record. macOS may also ask for permission to record system audio. No images are captured, sound stays audible, and no capture starts before your click.";
+"The meter follows the sound written to the MP3 file while recording." = "The meter follows the sound written to the MP3 file while recording.";
+"Connecting to the audio sources…" = "Connecting to the audio sources…";

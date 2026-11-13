@@ -96,7 +96,7 @@ struct ContentView: View {
             settingRow(icon: "app", title: NSLocalizedString("Source application", comment: "Source picker row title")) {
                 HStack(spacing: 8) {
                     Picker("", selection: $model.selectedApplicationID) {
-                        Text(NSLocalizedString("Choose an application…", comment: "Source picker placeholder"))
+                        Text(NSLocalizedString("No application", comment: "Source picker no application"))
                             .tag(RememberedSource?.none)
                         ForEach(model.applications) { application in
                             Text(application.name)
@@ -114,6 +114,36 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderless)
                     .help(NSLocalizedString("Refresh the list of open applications", comment: "Refresh applications tooltip"))
+                    .frame(width: settingActionWidth, alignment: .trailing)
+                    .disabled(model.isBusy)
+                }
+            }
+
+            Divider().padding(.leading, 42)
+
+            settingRow(icon: "mic", title: NSLocalizedString("Microphone", comment: "Microphone picker row title")) {
+                HStack(spacing: 8) {
+                    Picker("", selection: $model.selectedMicrophone) {
+                        Text(NSLocalizedString("No microphone", comment: "No microphone choice"))
+                            .tag(MicrophoneChoice.none)
+                        Text(model.systemDefaultMicrophoneLabel)
+                            .tag(MicrophoneChoice.systemDefault)
+                        ForEach(model.microphones) { microphone in
+                            Text(microphoneLabel(microphone))
+                                .tag(microphone.choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(model.isBusy)
+
+                    Button {
+                        model.refreshMicrophones()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(NSLocalizedString("Refresh the list of microphones", comment: "Refresh microphones tooltip"))
                     .frame(width: settingActionWidth, alignment: .trailing)
                     .disabled(model.isBusy)
                 }
@@ -281,7 +311,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 5) {
             Label(
                 NSLocalizedString(
-                    "Application audio only · no microphone · no images · sound stays audible.",
+                    "Audio only · no images · no automatic start.",
                     comment: "Audio-only footer"
                 ),
                 systemImage: "speaker.wave.2"
@@ -290,7 +320,7 @@ struct ContentView: View {
             .foregroundStyle(.secondary)
 
             Text(NSLocalizedString(
-                "macOS may ask for permission to record system audio on first launch. No images are captured, sound stays audible, and no capture starts before your click.",
+                "Microphone access is requested only when a microphone is selected, and only after you click Record. macOS may also ask for permission to record system audio. No images are captured, sound stays audible, and no capture starts before your click.",
                 comment: "Audio-only authorization note"
             ))
                 .font(.caption2)
@@ -310,52 +340,167 @@ struct ContentView: View {
     }
 
     private var recordingHeadline: String {
-        if let application = model.selectedApplication {
+        let applicationName = model.selectedApplicationID?.name
+        let microphoneName = model.selectedMicrophoneName
+
+        switch (applicationName, microphoneName) {
+        case let (application?, microphone?):
+            let key = model.phase.isRecording
+                ? "Recording %@ and the microphone “%@”"
+                : "%@ and the microphone “%@”"
+            return String(
+                format: NSLocalizedString(
+                    key,
+                    comment: "Recording headline with application and microphone"
+                ),
+                application,
+                microphone
+            )
+        case let (application?, nil):
             return model.phase.isRecording
                 ? String(
-                    format: NSLocalizedString("Recording %@", comment: "Recording headline with source name"),
-                    application.name
+                    format: NSLocalizedString(
+                        "Recording %@",
+                        comment: "Recording headline with source name"
+                    ),
+                    application
                 )
-                : application.name
+                : application
+        case let (nil, microphone?):
+            let key = model.phase.isRecording
+                ? "Recording the microphone “%@”"
+                : "Microphone “%@”"
+            return String(
+                format: NSLocalizedString(
+                    key,
+                    comment: "Recording headline with microphone name"
+                ),
+                microphone
+            )
+        case (nil, nil):
+            return NSLocalizedString("No source selected", comment: "Recording headline without source")
         }
-        return NSLocalizedString("No source selected", comment: "Recording headline without source")
     }
 
     private var statusDetail: String {
         switch model.phase {
         case .idle:
-            if let application = model.selectedApplication {
-                if !application.isRunning {
-                    return String(
-                        format: NSLocalizedString(
-                            "%@ is not open. Open it to record.",
-                            comment: "Idle status when source application is closed"
-                        ),
-                        application.name
-                    )
-                }
-                if model.outputFolder == nil {
-                    return String(
-                        format: NSLocalizedString(
-                            "Choose an output folder for %@.",
-                            comment: "Idle status without output folder"
-                        ),
-                        application.name
-                    )
-                }
-                return String(
-                    format: NSLocalizedString(
-                        "Ready to record audio from %@.",
-                        comment: "Idle status ready to record"
-                    ),
-                    application.name
-                )
-            }
-            return NSLocalizedString("Choose a source application.", comment: "Idle status without source")
+            return idleStatusDetail
         case let .failed(message):
             return message
         case .preparing, .recording, .stopping:
             return model.phase.detail
+        }
+    }
+
+    /// Nomme la source qui bloque ou les sources réellement actives : jamais
+    /// de repli silencieux sur l'autre source.
+    private var idleStatusDetail: String {
+        let applicationName = model.selectedApplicationID?.name
+        let microphoneName = model.selectedMicrophoneName
+
+        switch model.startDecision {
+        case .noSourceSelected:
+            return NSLocalizedString(
+                "Choose an application, a microphone, or both.",
+                comment: "Idle status without any source"
+            )
+        case let .applicationUnavailable(application):
+            return String(
+                format: NSLocalizedString(
+                    "%@ is not open. Open it to record.",
+                    comment: "Idle status when source application is closed"
+                ),
+                application.name
+            )
+        case let .microphoneUnavailable(microphone):
+            return String(
+                format: NSLocalizedString(
+                    "The selected microphone “%@” is not available. Choose another microphone.",
+                    comment: "Idle status when the selected microphone is missing"
+                ),
+                microphone.rememberedDisplayName
+            )
+        case .outputFolderMissing:
+            return folderMissingDetail(
+                applicationName: applicationName,
+                microphoneName: microphoneName
+            )
+        case .allowed:
+            return readyDetail(
+                applicationName: applicationName,
+                microphoneName: microphoneName
+            )
+        }
+    }
+
+    private func folderMissingDetail(
+        applicationName: String?,
+        microphoneName: String?
+    ) -> String {
+        switch (applicationName, microphoneName) {
+        case let (application?, microphone?):
+            return String(
+                format: NSLocalizedString(
+                    "Choose an output folder for %@ and the microphone “%@”.",
+                    comment: "Idle status without output folder for application and microphone"
+                ),
+                application,
+                microphone
+            )
+        case let (application?, nil):
+            return String(
+                format: NSLocalizedString(
+                    "Choose an output folder for %@.",
+                    comment: "Idle status without output folder"
+                ),
+                application
+            )
+        case let (nil, microphone?):
+            return String(
+                format: NSLocalizedString(
+                    "Choose an output folder for the microphone “%@”.",
+                    comment: "Idle status without output folder for microphone"
+                ),
+                microphone
+            )
+        case (nil, nil):
+            return NSLocalizedString("No folder chosen", comment: "Output folder placeholder")
+        }
+    }
+
+    private func readyDetail(
+        applicationName: String?,
+        microphoneName: String?
+    ) -> String {
+        switch (applicationName, microphoneName) {
+        case let (application?, microphone?):
+            return String(
+                format: NSLocalizedString(
+                    "Ready to record audio from %@ and the microphone “%@”.",
+                    comment: "Idle status ready to record from application and microphone"
+                ),
+                application,
+                microphone
+            )
+        case let (application?, nil):
+            return String(
+                format: NSLocalizedString(
+                    "Ready to record audio from %@.",
+                    comment: "Idle status ready to record"
+                ),
+                application
+            )
+        case let (nil, microphone?):
+            return String(
+                format: NSLocalizedString(
+                    "Ready to record audio from the microphone “%@”.",
+                    comment: "Idle status ready to record from microphone"
+                ),
+                microphone
+            )
+        case (nil, nil):
+            return NSLocalizedString("No source selected", comment: "Recording headline without source")
         }
     }
 
@@ -364,6 +509,17 @@ struct ContentView: View {
             return NSLocalizedString("No folder chosen", comment: "Output folder placeholder")
         }
         return (folder.path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func microphoneLabel(_ microphone: MicrophoneOption) -> String {
+        guard !microphone.isAvailable else { return microphone.name }
+        return String(
+            format: NSLocalizedString(
+                "%@ (unavailable)",
+                comment: "Unavailable microphone entry"
+            ),
+            microphone.name
+        )
     }
 
     private var statusColor: Color {

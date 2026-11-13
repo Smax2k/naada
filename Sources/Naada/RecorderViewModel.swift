@@ -16,17 +16,26 @@ final class RecorderViewModel: ObservableObject {
                 !$0.isRunning && $0.rememberedSource != selectedApplicationID
             }
 
-            guard let application = selectedApplication else { return }
-            if let suggested = SessionTitlePolicy.suggestedTitle(
-                currentTitle: sessionTitle,
-                lastSuggestedTitle: lastSuggestedTitle,
-                sourceName: application.name
-            ) {
-                sessionTitle = suggested
-                lastSuggestedTitle = suggested
-            }
+            suggestTitleFromSources()
         }
     }
+
+    /// Entrées de microphone proposées, y compris un micro mémorisé absent.
+    @Published private(set) var microphones: [MicrophoneOption] = []
+    @Published private(set) var defaultMicrophoneName: String?
+    /// Vrai quand macOS expose une entrée par défaut, même sans nom lisible.
+    @Published private(set) var hasDefaultMicrophone = false
+
+    @Published var selectedMicrophone: MicrophoneChoice = .none {
+        didSet {
+            guard !isRestoringSettings else { return }
+
+            settings.rememberedMicrophone = selectedMicrophone
+            refreshMicrophones()
+            suggestTitleFromSources()
+        }
+    }
+
     @Published var sessionTitle: String = "" {
         didSet {
             guard !isRestoringSettings else { return }
@@ -85,8 +94,10 @@ final class RecorderViewModel: ObservableObject {
         isRestoringSettings = true
         let restored = settings.restore()
         selectedApplicationID = restored.rememberedSource
+        selectedMicrophone = restored.microphone
         sessionTitle = restored.title
         refreshApplications()
+        refreshMicrophones()
         isRestoringSettings = false
 
         // Une première utilisation n'écrit rien : la liste vide ne remplace ni
@@ -121,6 +132,58 @@ final class RecorderViewModel: ObservableObject {
         return application
     }
 
+    /// Sources réellement choisies, sans effet de bord.
+    var captureSelection: CaptureSourceSelection {
+        CaptureSourceSelection(
+            application: selectedApplicationID,
+            microphone: selectedMicrophone
+        )
+    }
+
+    /// Décision unique de démarrage : aucune source, source manquante ou
+    /// dossier absent bloquent le bouton et sont nommés à l'écran.
+    var startDecision: CaptureStartDecision {
+        captureSelection.startDecision(
+            outputFolderPath: outputFolder?.path,
+            isApplicationAvailable: { source in
+                self.applications.contains { application in
+                    application.rememberedSource == source && application.isRunning
+                }
+            },
+            isMicrophoneAvailable: { choice in
+                self.isMicrophoneAvailable(choice)
+            }
+        )
+    }
+
+    /// Nom du microphone choisi, ou `nil` si aucun ne l'est.
+    var selectedMicrophoneName: String? {
+        switch selectedMicrophone {
+        case .none:
+            return nil
+        case .systemDefault:
+            return defaultMicrophoneName
+                ?? NSLocalizedString("System default microphone", comment: "System default microphone choice")
+        case let .selected(uid, name):
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? uid : trimmed
+        }
+    }
+
+    /// Libellé du choix « système par défaut » dans le sélecteur.
+    var systemDefaultMicrophoneLabel: String {
+        guard let defaultMicrophoneName else {
+            return NSLocalizedString("System default microphone", comment: "System default microphone choice")
+        }
+        return String(
+            format: NSLocalizedString(
+                "System default microphone (%@)",
+                comment: "System default microphone with device name"
+            ),
+            defaultMicrophoneName
+        )
+    }
+
     var phase: RecorderPhase {
         // Un démarrage matériel réussi n'est pas encore une capture : tant
         // qu'aucun buffer non vide n'est arrivé, l'interface reste en
@@ -137,9 +200,7 @@ final class RecorderViewModel: ObservableObject {
     }
 
     var canStart: Bool {
-        !session.state.isBusy
-            && selectedLiveApplication != nil
-            && outputFolder != nil
+        !session.state.isBusy && startDecision == .allowed
     }
 
     var canStop: Bool {
@@ -150,15 +211,17 @@ final class RecorderViewModel: ObservableObject {
         session.state.isBusy
     }
 
-    /// Créer un preset exige une source sélectionnée. Le dossier reste
-    /// facultatif : sans lui, le preset n'effacera pas le dossier courant.
+    /// Créer un preset exige au moins une source (application ou micro). Le
+    /// dossier reste facultatif : sans lui, le preset n'effacera pas le dossier
+    /// courant.
     var canSavePreset: Bool {
-        !isBusy && selectedApplicationID != nil
+        !isBusy && captureSelection.hasAnySource
     }
 
     var currentConfiguration: RecordingConfiguration {
         RecordingConfiguration(
             source: selectedApplicationID,
+            microphone: selectedMicrophone,
             title: sessionTitle,
             folderPath: outputFolder?.path
         )
@@ -168,6 +231,42 @@ final class RecorderViewModel: ObservableObject {
         applications = RunningApplicationCatalog.list(
             remembering: selectedApplicationID
         )
+    }
+
+    /// Relit les entrées audio sans ouvrir de flux, sans démarrer aucune
+    /// capture et sans demander de permission.
+    func refreshMicrophones() {
+        defaultMicrophoneName = MicrophoneCatalog.defaultInputDeviceName()
+        hasDefaultMicrophone = MicrophoneCatalog.hasDefaultInputDevice()
+
+        var options = MicrophoneCatalog.devices().map {
+            MicrophoneOption(choice: $0.choice, name: $0.name, isAvailable: true)
+        }
+
+        // Un microphone mémorisé absent reste visible et désigné : il ne doit
+        // jamais disparaître en silence au profit du micro système.
+        if case let .selected(uid, name) = selectedMicrophone,
+           !options.contains(where: { $0.choice == selectedMicrophone }) {
+            // Un micro renommé garde le même UID : son nom actuel remplace le
+            // nom mémorisé, sans faire croire à une seconde entrée.
+            let current = options.first { $0.choice.microphoneUID == uid }
+            options.append(
+                MicrophoneOption(
+                    choice: selectedMicrophone,
+                    name: current?.name
+                        ?? (name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? uid : name),
+                    isAvailable: current?.isAvailable ?? false
+                )
+            )
+        }
+
+        microphones = options.sorted { lhs, rhs in
+            let order = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            if order == .orderedSame {
+                return Self.microphoneSortKey(lhs.choice) < Self.microphoneSortKey(rhs.choice)
+            }
+            return order == .orderedAscending
+        }
     }
 
     func chooseOutputFolder() {
@@ -194,10 +293,10 @@ final class RecorderViewModel: ObservableObject {
     @discardableResult
     func createPreset(named name: String) -> RecordingPreset? {
         guard canSavePreset,
-              let source = selectedApplicationID,
               let preset = presetStore.create(
                   name: name,
-                  source: source,
+                  source: selectedApplicationID,
+                  microphone: selectedMicrophone,
                   title: sessionTitle,
                   folderPath: outputFolder?.path
               )
@@ -209,14 +308,16 @@ final class RecorderViewModel: ObservableObject {
         return preset
     }
 
-    /// Applique un preset aux trois réglages visibles. Une source fermée
-    /// reste sélectionnée et visible ; aucun enregistrement ne démarre.
+    /// Applique un preset aux réglages visibles. Une source fermée ou un
+    /// micro absent restent sélectionnés et visibles ; aucun enregistrement
+    /// ne démarre.
     func applyPreset(_ preset: RecordingPreset) {
         guard !isBusy else { return }
 
         let applied = preset.applied(to: currentConfiguration)
         selectedApplicationID = applied.source
         refreshApplications()
+        selectedMicrophone = applied.microphone
         sessionTitle = applied.title
 
         if let folderPath = applied.folderPath,
@@ -239,13 +340,14 @@ final class RecorderViewModel: ObservableObject {
     @discardableResult
     func updatePreset(id: UUID) -> Bool {
         guard !isBusy,
-              let source = selectedApplicationID,
+              captureSelection.hasAnySource,
               var updated = presets.first(where: { $0.id == id })
         else {
             return false
         }
 
-        updated.source = source
+        updated.source = selectedApplicationID
+        updated.microphone = selectedMicrophone
         updated.title = sessionTitle
         updated.folderPath = outputFolder?.path
 
@@ -262,12 +364,18 @@ final class RecorderViewModel: ObservableObject {
     }
 
     func startRecording() {
-        guard canStart,
-              let application = selectedLiveApplication,
-              let folder = outputFolder
-        else {
+        // Relit les deux listes juste avant de décider : une application
+        // fermée ou un micro débranché depuis le dernier rafraîchissement ne
+        // doit jamais laisser partir une capture.
+        refreshApplications()
+        refreshMicrophones()
+
+        guard startDecision == .allowed, let folder = outputFolder else {
             return
         }
+
+        let application = selectedLiveApplication
+        let microphone = selectedMicrophone
 
         errorMessage = nil
         lastOutputURL = nil
@@ -308,7 +416,11 @@ final class RecorderViewModel: ObservableObject {
 
             Task {
                 do {
-                    try await engine.start(application: application, writer: writer)
+                    try await engine.start(
+                        application: application,
+                        microphone: microphone,
+                        writer: writer
+                    )
 
                     // Un arrêt inattendu peut avoir été signalé pendant le
                     // démarrage. Ne jamais réécrire cet échec en « recording ».
@@ -359,6 +471,7 @@ final class RecorderViewModel: ObservableObject {
                     startWaitingForAudioWatchdog(
                         engine: engine,
                         application: application,
+                        microphone: microphone,
                         token: token
                     )
                 } catch {
@@ -548,7 +661,8 @@ final class RecorderViewModel: ObservableObject {
     /// son n'arrive encore. Aucun repli global ou helper n'est tenté.
     private func startWaitingForAudioWatchdog(
         engine: AudioCaptureEngine,
-        application: SourceApplication,
+        application: SourceApplication?,
+        microphone: MicrophoneChoice,
         token: UUID
     ) {
         waitingForAudioTask?.cancel()
@@ -577,26 +691,77 @@ final class RecorderViewModel: ObservableObject {
             }
 
             let message: String
-            if engine.selectedProcessIsProducingOutput() == false {
-                message = String(
-                    format: NSLocalizedString(
-                        "Naada is not receiving audio from “%@”. The selected process is not playing sound. Start playback and check that the application is not muted.",
-                        comment: "No audio from the selected process"
-                    ),
-                    application.name
-                )
+            if let application {
+                if engine.selectedProcessIsProducingOutput() == false {
+                    message = String(
+                        format: NSLocalizedString(
+                            "Naada is not receiving audio from “%@”. The selected process is not playing sound. Start playback and check that the application is not muted.",
+                            comment: "No audio from the selected process"
+                        ),
+                        application.name
+                    )
+                } else {
+                    message = String(
+                        format: NSLocalizedString(
+                            "No audio has arrived from “%@” yet. Start playback and check that the application is not muted. Naada also captures the application's audio helper processes.",
+                            comment: "No audio yet from the selected application"
+                        ),
+                        application.name
+                    )
+                }
             } else {
                 message = String(
                     format: NSLocalizedString(
-                        "No audio has arrived from “%@” yet. Start playback and check that the application is not muted. Naada also captures the application's audio helper processes.",
-                        comment: "No audio yet from the selected application"
+                        "No audio has arrived from microphone “%@” yet. Check that it is not muted and that macOS input is working.",
+                        comment: "No audio yet from the selected microphone"
                     ),
-                    application.name
+                    microphone.rememberedDisplayName
                 )
             }
 
             self.waitingWarningMessage = message
             self.errorMessage = message
+        }
+    }
+
+    private func isMicrophoneAvailable(_ choice: MicrophoneChoice) -> Bool {
+        switch choice {
+        case .none:
+            return true
+        case .systemDefault:
+            return hasDefaultMicrophone
+        case let .selected(uid, _):
+            return microphones.contains { option in
+                option.isAvailable && option.choice.microphoneUID == uid
+            }
+        }
+    }
+
+    /// Suggestion de titre : nom de l'application, sinon nom du micro, rien
+    /// si les deux sources sont absentes.
+    private func suggestTitleFromSources() {
+        guard let sourceName = selectedApplicationID?.name ?? selectedMicrophoneName else {
+            return
+        }
+        guard let suggested = SessionTitlePolicy.suggestedTitle(
+            currentTitle: sessionTitle,
+            lastSuggestedTitle: lastSuggestedTitle,
+            sourceName: sourceName
+        ) else {
+            return
+        }
+        sessionTitle = suggested
+        lastSuggestedTitle = suggested
+    }
+
+    private static func microphoneSortKey(_ choice: MicrophoneChoice) -> String {
+        switch choice {
+        case .none:
+            return "0"
+        case .systemDefault:
+            return "1"
+        case let .selected(uid, name):
+            return "2\u{1F}\(uid)\u{1F}\(name)"
         }
     }
 

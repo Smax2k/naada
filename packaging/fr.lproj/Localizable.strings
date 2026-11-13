@@ -110,3 +110,40 @@
 "No available file name was found for this recording." = "Aucun nom de fichier libre n'a été trouvé pour cet enregistrement.";
 "Naada is not receiving audio from “%@”. The selected process is not playing sound. Start playback and check that the application is not muted." = "Naada ne reçoit aucun audio de « %@ ». Le processus sélectionné ne joue aucun son. Lancez la lecture et vérifiez que l'application n'est pas muette.";
 "No audio has arrived from “%@” yet. Start playback and check that the application is not muted. Naada also captures the application's audio helper processes." = "Naada n'a encore reçu aucun audio de « %@ ». Lancez la lecture et vérifiez que l'application n'est pas muette. Naada capture aussi les processus d'aide audio de l'application.";
+
+"The selected microphone is no longer available." = "Le microphone sélectionné n'est plus disponible.";
+"Microphone access was denied." = "L'accès au microphone a été refusé.";
+"The microphone could not be opened (error %d)." = "Le microphone n'a pas pu être ouvert (erreur %d).";
+"The microphone format could not be read (error %d)." = "Le format du microphone n'a pas pu être lu (erreur %d).";
+"Select an application, a microphone, or both before recording." = "Sélectionnez une application, un microphone, ou les deux avant d'enregistrer.";
+"Microphone access is not allowed. Allow it in System Settings, then try again." = "L'accès au microphone n'est pas autorisé. Autorisez-le dans Réglages Système, puis réessayez.";
+"The microphone could not be opened." = "Le microphone n'a pas pu être ouvert.";
+"The microphone's audio format could not be read." = "Le format audio du microphone n'a pas pu être lu.";
+"The microphone could not start capturing audio." = "Le microphone n'a pas pu démarrer la capture audio.";
+
+"No application" = "Aucune application";
+"Microphone" = "Microphone";
+"No microphone" = "Aucun microphone";
+"System default microphone" = "Microphone système par défaut";
+"System default microphone (%@)" = "Microphone système par défaut (%@)";
+"Refresh the list of microphones" = "Actualiser la liste des microphones";
+"%@ (unavailable)" = "%@ (indisponible)";
+"Choose an application, a microphone, or both." = "Choisissez une application, un microphone, ou les deux.";
+"The selected microphone “%@” is not available. Choose another microphone." = "Le microphone sélectionné « %@ » n'est pas disponible. Choisissez un autre microphone.";
+"Choose an output folder for %@ and the microphone “%@”." = "Choisissez un dossier de sortie pour %@ et le microphone « %@ ».";
+"Choose an output folder for the microphone “%@”." = "Choisissez un dossier de sortie pour le microphone « %@ ».";
+"Ready to record audio from %@ and the microphone “%@”." = "Prêt à enregistrer l'audio de %@ et du microphone « %@ ».";
+"Ready to record audio from the microphone “%@”." = "Prêt à enregistrer l'audio du microphone « %@ ».";
+"Recording %@ and the microphone “%@”" = "Enregistrement de %@ et du microphone « %@ »";
+"%@ and the microphone “%@”" = "%@ et le microphone « %@ »";
+"Recording the microphone “%@”" = "Enregistrement du microphone « %@ »";
+"Microphone “%@”" = "Microphone « %@ »";
+"No audio has arrived from microphone “%@” yet. Check that it is not muted and that macOS input is working." = "Naada n'a encore reçu aucun son du microphone « %@ ». Vérifiez qu'il n'est pas muet et que l'entrée macOS fonctionne.";
+"No source" = "Aucune source";
+"The preset remembers the selected application, microphone, title and folder shown in the main window." = "Le preset mémorise l'application, le microphone, le titre et le dossier sélectionnés dans la fenêtre principale.";
+"Choose an application or a microphone first, outside recording." = "Choisissez d'abord une application ou un microphone, hors enregistrement.";
+
+"Audio only · no images · no automatic start." = "Audio uniquement · aucune image · aucun démarrage automatique.";
+"Microphone access is requested only when a microphone is selected, and only after you click Record. macOS may also ask for permission to record system audio. No images are captured, sound stays audible, and no capture starts before your click." = "L'accès au microphone n'est demandé que si un microphone est choisi, et seulement après votre clic sur Enregistrer. macOS peut aussi demander l'autorisation d'enregistrer l'audio du système. Aucune image n'est capturée, le son reste audible et aucune capture ne démarre avant votre clic.";
+"The meter follows the sound written to the MP3 file while recording." = "La jauge suit le son écrit dans le fichier MP3 pendant l'enregistrement.";
+"Connecting to the audio sources…" = "Connexion aux sources audio…";

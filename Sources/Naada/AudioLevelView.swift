@@ -114,7 +114,7 @@ struct AudioLevelView: View {
         }
         .accessibilityHint(
             NSLocalizedString(
-                "The meter follows the source application's actual sound during recording.",
+                "The meter follows the sound written to the MP3 file while recording.",
                 comment: "Audio level accessibility hint"
             )
         )

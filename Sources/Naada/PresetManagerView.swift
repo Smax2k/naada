@@ -138,7 +138,18 @@ struct PresetManagerView: View {
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
 
-                    Label(preset.source.name, systemImage: "app")
+                    if let applicationName = applicationLabel(for: preset) {
+                        Label(applicationName, systemImage: "app")
+                    }
+                    if let microphoneName = microphoneLabel(for: preset.microphone) {
+                        Label(microphoneName, systemImage: "mic")
+                    }
+                    if preset.source == nil && preset.microphone == .none {
+                        Label(
+                            NSLocalizedString("No source", comment: "Preset without source"),
+                            systemImage: "nosign"
+                        )
+                    }
                     Label(preset.title.isEmpty
                         ? NSLocalizedString("Untitled", comment: "Preset without title")
                         : preset.title, systemImage: "textformat")
@@ -231,7 +242,7 @@ struct PresetManagerView: View {
             Text(NSLocalizedString("Create from current configuration", comment: "Preset creation section title"))
                 .font(.callout.weight(.semibold))
             Text(NSLocalizedString(
-                "The preset remembers the selected source, title and folder shown in the main window.",
+                "The preset remembers the selected application, microphone, title and folder shown in the main window.",
                 comment: "Preset creation explanation"
             ))
                 .font(.caption)
@@ -251,7 +262,7 @@ struct PresetManagerView: View {
 
             if !model.canSavePreset {
                 Text(NSLocalizedString(
-                    "Choose a source application first, outside recording.",
+                    "Choose an application or a microphone first, outside recording.",
                     comment: "Preset creation requirement"
                 ))
                     .font(.caption)
@@ -306,6 +317,24 @@ struct PresetManagerView: View {
             return NSLocalizedString("Current folder kept", comment: "Preset keeping current output folder")
         }
         return (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func applicationLabel(for preset: RecordingPreset) -> String? {
+        let name = preset.source?.name ?? ""
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func microphoneLabel(for microphone: MicrophoneChoice) -> String? {
+        switch microphone {
+        case .none:
+            return nil
+        case .systemDefault:
+            return NSLocalizedString("System default microphone", comment: "System default microphone choice")
+        case let .selected(uid, name):
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? uid : trimmed
+        }
     }
 
     private var panelBackground: some View {

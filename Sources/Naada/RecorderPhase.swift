@@ -60,7 +60,7 @@ enum RecorderPhase: Equatable {
                 comment: "Recorder idle detail"
             )
         case .preparing:
-            return NSLocalizedString("Connecting to the audio source…", comment: "Recorder preparing detail")
+            return NSLocalizedString("Connecting to the audio sources…", comment: "Recorder preparing detail")
         case .recording:
             return NSLocalizedString(
                 "System sound stays audible during capture.",
