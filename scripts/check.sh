@@ -17,9 +17,13 @@ if grep -REn "$FORBIDDEN_SCREEN_PATTERN" Sources packaging >/dev/null; then
 fi
 
 FORBIDDEN_TAP_PATTERN='CATapMuted|kAudioHardwarePropertyDefaultOutputDevice|muteBehavior *= *\.(muted|mutedWhenTapped)|isPrivate *= *false|isExclusive *= *true|usesBundleIdentifiers *= *true|targetsDefaultOutputDevice *= *true|stereoGlobalTap|monoGlobalTap|GlobalTapButExclude'
-if grep -REn "$FORBIDDEN_TAP_PATTERN" Sources >/dev/null; then
+# Seule la sonde peut lire la sortie par défaut, pour comparer avant/après ;
+# elle ne l'écrit jamais (contrôle AudioObjectSetPropertyData ci-dessous).
+TAP_VIOLATIONS="$(grep -REn "$FORBIDDEN_TAP_PATTERN" Sources \
+    | grep -Ev '^Sources/Naada/CaptureProbe.swift:[0-9]+:[[:space:]]*mSelector: kAudioHardwarePropertyDefaultOutputDevice,$' || true)"
+if [[ -n "$TAP_VIOLATIONS" ]]; then
     echo "Échec : un tap muet ou un changement de sortie par défaut subsiste :" >&2
-    grep -REn "$FORBIDDEN_TAP_PATTERN" Sources >&2
+    printf '%s\n' "$TAP_VIOLATIONS" >&2
     exit 1
 fi
 

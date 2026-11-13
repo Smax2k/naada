@@ -662,3 +662,154 @@ sont supprimés après relevé ; les métriques et la pile ci-dessus en sont la
 trace conservée. La reproduction exacte du diagnostic minimal n'est donc plus
 possible ; les variantes du tableau sont des observations, pas un banc d'essai
 conservé.
+
+## Preuve réelle de capture audio — 13 novembre 2026 (PASS)
+
+### Résultat
+
+La preuve demandée est atteinte sur l'état courant : la sonde de Naada reçoit
+réellement le signal d'une source synthétique isolée, le callback produit un
+RMS mesurable, le MP3 est encodé puis décodé en 48 kHz / 2 canaux, et la sortie
+par défaut n'est pas modifiée. Aucune interface n'a été lancée, aucun son n'a
+été émis, aucun réglage de volume ou de routage n'a été écrit.
+
+- Dépôt : `63fdc28`, arbre initial propre.
+- Machine : macOS 27.2.1 (26B131), Apple Silicon.
+- Sonde exécutée directement depuis le bundle, jamais avec `open` :
+  `Naada.app/Contents/MacOS/Naada --capture-probe <pid source> <dossier> 10`.
+- Source : sinus 440 Hz, 48 kHz, 2 canaux, amplitude 0,5 (RMS généré
+  `0,35355339059327373`), dirigée vers **BlackHole 2ch** (`BlackHole2ch_UID`)
+  uniquement. Le harnais refuse de démarrer si BlackHole est la sortie par
+  défaut ; il ne vise jamais les haut-parleurs ni les écouteurs.
+- Harnais conservé et reproductible : `scripts/audio-capture-smoke.swift`
+  (mode source, et mode `--readback` pour prouver le signal dans le puits
+  virtuel). Compilation :
+  `xcrun swiftc -O scripts/audio-capture-smoke.swift -o .orchestrator/.../audio-capture-smoke`.
+- Quatre exécutions réelles : bundle existant, relevé d'identité, puis deux
+  bundles reconstruits. Les quatre passent ; les métriques du bundle final
+  installé sont ci-dessous.
+
+### Métriques de la sonde finale
+
+Preuve JSON :
+`.orchestrator/naada-capture-proof-20261113/attempt4-final2/chrome-capture-proof.json`.
+
+| Mesure | Valeur | Seuil |
+|---|---|---|
+| `callbackRMSMax` | `0,35905939340591431` | `> 0,02` |
+| `mp3RMS` | `0,39729663729667664` | `> 0,02` |
+| `mp3Frames` | `497664` | `> 0` |
+| `mp3SampleRate` | `48000` | `== 48000` |
+| `mp3Channels` | `2` | `== 2` |
+| `bytes` | `248832` | — |
+| `defaultOutputUnchanged` | `true` | `true` |
+| code de sortie | `0` | `0` |
+
+Exécutions précédentes, même protocole :
+
+| Exécution | `callbackRMSMax` | `mp3RMS` | `mp3Frames` | `bytes` |
+|---|---|---|---|---|
+| bundle existant `86dbed6d` | `0,35907784104347229` | `0,39721763134002686` | `502272` | `251136` |
+| relevé d'identité | `0,35904902219772339` | `0,39688235521316528` | `249984` | `124992` |
+| bundle final1 `428103be` | `0,35913783311843872` | `0,39727157354354858` | `512640` | `256320` |
+| bundle final2 `f3deaf26` | `0,35905939340591431` | `0,39729663729667664` | `497664` | `248832` |
+
+La source a produit `963584` frames en 20 s (auto-test) et `1443328` frames en
+30 s (exécution finale). Le lecteur BlackHole indépendant, en mode `--readback`,
+mesure `maxRMS 0,35913050174713135`, `469` callbacks, `240128` frames,
+`0` échec : le signal existe réellement dans le puits virtuel. Ce lecteur ne
+prouve pas que le tap de processus le reçoit ; c'est la sonde qui le prouve.
+
+### Non-audibilité et système inchangé
+
+- BlackHole 2ch : volume `1`, mute `0`, `runningSomewhere` `0` avant, `1`
+  pendant la source, `0` après.
+- Sortie par défaut : « Écouteurs externes »
+  (`BuiltInHeadphoneOutputDevice`), volume `0,5625`, mute `0` avant, pendant et
+  après. `osascript` : `output volume:56, output muted:false`, identique avant
+  et après. Relevé final :
+  `.orchestrator/naada-capture-proof-20261113/system-final.json`.
+- Aucun moniteur de BlackHole actif (Loopback, Audio Hijack, SoundSource, OBS) ;
+  aucun processus ne lit BlackHole en dehors du `--readback` explicite.
+- Le helper audio de Chrome (`pid 1626`, `audio.mojom.AudioService`) a lu une
+  entrée par intermittence pendant le lot (micro Shure MV7+), sans rapport avec
+  BlackHole ; il n'a pas été tapé et n'a pas été interrompu. Son état a fluctué
+  seul (`runningInput` `1` ou `0` selon les relevés), sans action de Naada.
+- Aucune lecture audible du MP3 : le fichier a été décodé par `AVAudioFile` et
+  mesuré, jamais lu par un périphérique de sortie.
+
+### Identité effective et attribution de permission
+
+Arbre relevé pendant une sonde courte (seuls les PID pertinents) :
+
+```
+  PID  PPID COMM
+ 3268  3219 .../opencode/cli-darwin-arm64/bin/opencode serve --hostname 127.0.0.1 --port 57905
+60710  3268 /bin/zsh
+60719 60710 Naada.app/Contents/MacOS/Naada --capture-probe 60714 ... 5
+```
+
+La source synthétique était le PID `60714`, processus distinct.
+
+- Bundle Naada : `Identifier=com.naada.recorder`,
+  `TeamIdentifier=BG55CF653X`, runtime durci, horodatage sécurisé, exigence
+  désignée stable `identifier "com.naada.recorder" ... certificate
+  leaf[subject.OU] = BG55CF653X`, sans CDHash.
+- Processus responsable Node/OpenCode : `Identifier=opencode`,
+  `TeamIdentifier=5NZ4Q7NXJ4`, signé Developer ID Anomaly Innovations, Inc.
+- Journal TCC (`tccd`, 13 novembre 2026 04:34:18) : la demande
+  `kTCCServiceAudioCapture` a pour sujet
+  `/opt/homebrew/Cellar/node/26.5.0/bin/node`
+  (`AUTHREQ_SUBJECT`), avec `authValue=2`, `authReason=2`, et une attribution
+  `responsible={node...}` / `accessing={com.naada.recorder...}`. Une préflight
+  `kTCCServiceScreenCapture` est également attribuée à Node
+  (`authValue=2`, `authReason=4`) ; elle vient du contrôle du HAL, pas d'un
+  chemin d'enregistrement d'écran dans Naada.
+- La même attribution est relevée pour l'exécution final2 (PID `64025`) :
+  `tcc-final2.log`, `kTCCServiceAudioCapture`, sujet
+  `/opt/homebrew/Cellar/node/26.5.0/bin/node`, `authValue=2`, `authReason=2`,
+  `accessing={com.naada.recorder...}`.
+- **Conséquence à ne pas déformer** : l'accord observé est porté par le
+  processus responsable Node. Il ne prouve pas que l'identité de bundle
+  `com.naada.recorder` possède sa propre autorisation audio. La base TCC
+  utilisateur n'est pas lisible depuis cette session (Full Disk Access absent) ;
+  aucune entrée propre à Naada n'est prouvée. La sonde réussit sous
+  l'attribution Node, pas sous une autorisation Naada démontrée.
+
+### Signature et installation
+
+- Bundle final construit par `./scripts/check.sh` :
+  `CDHash=f3deaf26198cacc40980e449e0a2d8af467d8909`,
+  horodatage `13 Nov 2026 at 04:41:00`, équipe `BG55CF653X`, runtime durci,
+  exigence stable sans CDHash.
+- `codesign --verify --strict` : exit `0` sur le bundle construit et sur
+  `/Applications/Naada.app`.
+- Installation après PASS, Naada arrêtée (`pgrep -x Naada` vide avant et après) :
+  `/Applications/Naada.app` remplacé par le bundle construit.
+- `diff -qr Naada.app /Applications/Naada.app` : aucun écart. Même CDHash
+  `f3deaf26…`, même exigence, même SHA-256 du binaire
+  `1a34fb5c80865fab835ad1b997b14877df77546d964ff6d7254d82f624a3111f`.
+  Aucune quarantaine ; `spctl -a -vv` répond « rejected / Unnotarized Developer
+  ID », attendu sans notarisation et sans contournement.
+- `./scripts/test.sh` : **106 tests, 0 échec**. `./scripts/check.sh` : exit `0`
+  (tests, reconstruction signée, garde-fous statiques, signature, icône,
+  liaisons système). Journaux : `.orchestrator/naada-capture-proof-20261113/test.log`
+  et `check.log`.
+- `scripts/check.sh` a été corrigé d'un faux positif : le motif interdisait
+  globalement `kAudioHardwarePropertyDefaultOutputDevice`, alors que la sonde ne
+  fait que **lire** la sortie par défaut pour comparer avant/après. Le motif
+  reste interdit partout ; seule la ligne de `CaptureProbe.swift` est exclue,
+  et la sonde ne doit jamais écrire (`AudioObjectSetPropertyData` contrôlé).
+
+### Limites et état laissé
+
+- La preuve porte sur une source synthétique et sur une sonde lancée depuis
+  l'arbre `node` de l'agent. Elle ne prouve pas le parcours d'une Naada lancée
+  normalement par la personne, ni une autorisation TCC propre à Naada.
+- Aucun lancement GUI, aucune capture d'écran, aucun clic sur une invite, aucun
+  changement de volume, de mute, de sortie par défaut ou de routage.
+- Aucun commit, push, publication ni notarisation.
+- Quatre taps privés nommés « Naada minimal diagnostic tap » préexistent à ce
+  lot (diagnostic minimal d'un lot antérieur). Ils n'ont pas été créés ici et
+  n'ont pas été détruits ; aucun agrégat ni périphérique « Naada » ne subsiste.
+  Les taps créés par cette sonde ont été détruits par le moteur à l'arrêt.
