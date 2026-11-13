@@ -59,6 +59,16 @@ final class RecorderViewModel: ObservableObject {
     private var sessionToken: UUID?
     private var lastSuggestedTitle = ""
     private var workspaceObservers: [NSObjectProtocol] = []
+    /// Vrai dès le premier buffer non vide : la phase « enregistrement » ne
+    /// s'affiche qu'après une réception réelle, jamais sur le seul démarrage
+    /// matériel.
+    private var hasReceivedAudio = false
+    private var waitingForAudioTask: Task<Void, Never>?
+    private var waitingWarningMessage: String?
+
+    /// Délai borné avant d'expliquer qu'aucun son n'arrive. Ce n'est pas un
+    /// arrêt automatique : l'utilisateur peut encore lancer la lecture.
+    private static let firstAudioTimeout: TimeInterval = 8
 
     init(
         settings: SessionSettingsStore = SessionSettingsStore(),
@@ -90,6 +100,7 @@ final class RecorderViewModel: ObservableObject {
 
     deinit {
         ticker?.invalidate()
+        waitingForAudioTask?.cancel()
         for observer in workspaceObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -111,7 +122,14 @@ final class RecorderViewModel: ObservableObject {
     }
 
     var phase: RecorderPhase {
-        RecorderPhase(session.state)
+        // Un démarrage matériel réussi n'est pas encore une capture : tant
+        // qu'aucun buffer non vide n'est arrivé, l'interface reste en
+        // « préparation » et la jauge ne s'anime pas. L'arrêt reste possible
+        // car `canStop` suit l'état de la session, pas cette phase affichée.
+        if session.state == .recording, !hasReceivedAudio {
+            return .preparing
+        }
+        return RecorderPhase(session.state)
     }
 
     var elapsedText: String {
@@ -253,6 +271,10 @@ final class RecorderViewModel: ObservableObject {
 
         errorMessage = nil
         lastOutputURL = nil
+        hasReceivedAudio = false
+        waitingWarningMessage = nil
+        waitingForAudioTask?.cancel()
+        waitingForAudioTask = nil
         resetAudioLevel()
         session.beginPreparation(at: Date.timeIntervalSinceReferenceDate)
 
@@ -291,6 +313,7 @@ final class RecorderViewModel: ObservableObject {
                     // Un arrêt inattendu peut avoir été signalé pendant le
                     // démarrage. Ne jamais réécrire cet échec en « recording ».
                     guard self.engine === engine, sessionToken == token else {
+                        resetWaitingForAudio()
                         _ = try? await engine.stop()
                         return
                     }
@@ -300,6 +323,7 @@ final class RecorderViewModel: ObservableObject {
                         }
                         if sessionToken == token {
                             resetAudioLevel()
+                            resetWaitingForAudio()
                             sessionToken = nil
                         }
                         _ = try? await engine.stop()
@@ -312,6 +336,7 @@ final class RecorderViewModel: ObservableObject {
                                 comment: "Capture startup failure"
                             )
                         resetAudioLevel()
+                        resetWaitingForAudio()
                         sessionToken = nil
                         self.engine = nil
                         session.fail(
@@ -324,11 +349,22 @@ final class RecorderViewModel: ObservableObject {
                     }
 
                     session.captureStarted(at: Date.timeIntervalSinceReferenceDate)
+                    // Un buffer peut être arrivé pendant le démarrage, avant
+                    // que la session ne soit « recording » : son niveau a été
+                    // filtré, mais l'état du moteur, lui, est déjà en
+                    // réception.
+                    hasReceivedAudio = engine.isReceivingAudio
                     now = Date()
                     startTicker()
+                    startWaitingForAudioWatchdog(
+                        engine: engine,
+                        application: application,
+                        token: token
+                    )
                 } catch {
                     guard sessionToken == token else { return }
                     resetAudioLevel()
+                    resetWaitingForAudio()
                     sessionToken = nil
                     if self.engine === engine {
                         self.engine = nil
@@ -342,6 +378,7 @@ final class RecorderViewModel: ObservableObject {
             }
         } catch {
             resetAudioLevel()
+            resetWaitingForAudio()
             sessionToken = nil
             session.fail(
                 error.localizedDescription,
@@ -359,6 +396,7 @@ final class RecorderViewModel: ObservableObject {
         resetAudioLevel()
         let token = sessionToken
         session.stopRequested(at: Date.timeIntervalSinceReferenceDate)
+        resetWaitingForAudio()
         now = Date()
         stopTicker()
 
@@ -451,6 +489,7 @@ final class RecorderViewModel: ObservableObject {
         guard session.state.isRecording || session.state == .preparing else { return }
 
         resetAudioLevel()
+        resetWaitingForAudio()
         sessionToken = nil
         session.fail(
             error.localizedDescription,
@@ -489,10 +528,86 @@ final class RecorderViewModel: ObservableObject {
         // Un callback déjà en file après l'arrêt ne doit jamais rallumer la
         // jauge : le jeton et l'état « recording » filtrent ces mesures.
         guard sessionToken == token, session.state.isRecording else { return }
+
+        // Un buffer non vide, même silencieux, établit la réception : le
+        // silence numérique n'est pas une absence de source.
+        if !hasReceivedAudio {
+            hasReceivedAudio = true
+            waitingForAudioTask?.cancel()
+            waitingForAudioTask = nil
+            if let warning = waitingWarningMessage, errorMessage == warning {
+                errorMessage = nil
+            }
+            waitingWarningMessage = nil
+        }
+
         audioLevel = min(1, max(0, level))
+    }
+
+    /// Explique, une seule fois et sans arrêter la capture, pourquoi aucun
+    /// son n'arrive encore. Aucun repli global ou helper n'est tenté.
+    private func startWaitingForAudioWatchdog(
+        engine: AudioCaptureEngine,
+        application: SourceApplication,
+        token: UUID
+    ) {
+        waitingForAudioTask?.cancel()
+        waitingForAudioTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(
+                nanoseconds: UInt64(Self.firstAudioTimeout * 1_000_000_000)
+            )
+            guard !Task.isCancelled, let self else { return }
+            guard
+                self.sessionToken == token,
+                self.engine === engine,
+                self.session.state.isRecording
+            else {
+                return
+            }
+
+            // Le moteur peut déjà être en réception si le callback de niveau a
+            // été filtré pendant le démarrage : ne jamais afficher un faux
+            // avertissement dans ce cas.
+            if engine.isReceivingAudio {
+                self.hasReceivedAudio = true
+                return
+            }
+            guard !self.hasReceivedAudio, engine.isWaitingForAudio else {
+                return
+            }
+
+            let message: String
+            if engine.selectedProcessIsProducingOutput() == false {
+                message = String(
+                    format: NSLocalizedString(
+                        "Naada is not receiving audio from “%@”. The process it selected is not playing sound; a browser often plays audio in a separate helper process, which Naada does not capture. Choose an application whose own process is playing the sound.",
+                        comment: "No audio from the selected process"
+                    ),
+                    application.name
+                )
+            } else {
+                message = String(
+                    format: NSLocalizedString(
+                        "No audio has arrived from “%@” yet. Make sure it is playing sound. A browser may play its audio in a separate helper process, which Naada does not capture.",
+                        comment: "No audio yet from the selected application"
+                    ),
+                    application.name
+                )
+            }
+
+            self.waitingWarningMessage = message
+            self.errorMessage = message
+        }
     }
 
     private func resetAudioLevel() {
         audioLevel = 0
+    }
+
+    private func resetWaitingForAudio() {
+        hasReceivedAudio = false
+        waitingWarningMessage = nil
+        waitingForAudioTask?.cancel()
+        waitingForAudioTask = nil
     }
 }

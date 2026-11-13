@@ -353,3 +353,112 @@ l'arrêt de l'application source, l'exécution sur macOS 14.0–14.1 et tout app
 
 La signature est vérifiée ; l'installation reste à la charge du lead après
 intégration.
+
+## Correctif du tap silencieux — constat humain et cause du 2026-11-13
+
+### Constat humain
+
+Jonathan a accordé l'autorisation audio seule, puis a lancé une vidéo. Naada n'a
+rien enregistré : jauge vide, aucun son détecté, aucune capture effective. Le
+bundle alors installé contenait bien le chemin tap
+(`AudioHardwareCreateProcessTap` présent dans le binaire, aucun lien
+`ScreenCaptureKit`) ; ce n'était donc pas l'ancienne version d'enregistrement
+d'écran.
+
+### Diagnostic statique : source multiprocessus, cause runtime non confirmée
+
+La source mémorisée dans Naada était **Google Chrome**. Une lecture seule des
+métadonnées HAL (`kAudioHardwarePropertyProcessObjectList`,
+`kAudioProcessPropertyPID`, `kAudioProcessPropertyBundleID`,
+`kAudioProcessPropertyIsRunningOutput`) et des lignes de commande des processus
+montre que Chrome expose :
+
+- son processus principal, celui que `NSWorkspace` fournit à Naada ;
+- deux processus `Google Chrome Helper`, dont l'un est explicitement
+  `--utility-sub-type=audio.mojom.AudioService`.
+
+Le tap de Naada vise uniquement l'objet processus du PID principal, traduit par
+`kAudioHardwarePropertyTranslatePIDToProcessObject`. L'existence du service audio
+séparé constitue une explication plausible de l'échec avec Chrome : le PID
+principal peut ne pas émettre le son de la vidéo. Ces observations au repos ne
+prouvent toutefois ni le producteur exact pendant l'essai humain, ni la cause
+unique de l'absence de buffers. Un refus TCC et un défaut du pipeline ne sont pas
+écartés par ces seules métadonnées. Aucun correctif fonctionnel de Chrome n'est
+revendiqué ici.
+
+Aucun tap, aucun périphérique, aucune capture, aucun son et aucune action TCC
+n'ont été créés ou déclenchés pour établir ce constat. Le HAL ne permet pas de
+prouver au repos lequel des deux helpers produit le son à un instant donné ;
+seule la ligne de commande nomme le service audio.
+
+### Corrections apportées
+
+1. **Agrégat conforme au contrat du SDK.** `private`, `stacked` et
+   `tapautostart` sont désormais des `NSNumber` entiers, jamais des `Bool`
+   bridgés en `CFBoolean` que `CFNumberGetValue` refuse. La compensation de
+   dérive du sous-tap est un entier. `tapautostart` reste à 0 : le démarrage ne
+   doit jamais attendre le premier son. Le plan pur est dans
+   `Sources/NaadaCore/TapAggregateComposition.swift`, et ses clés littérales
+   sont confrontées aux constantes Core Audio par les tests.
+2. **Format effectif de l'agrégat.** Le moteur lit le format d'entrée de
+   l'agrégat après sa création, avec une attente bornée d'une seconde et un
+   repli sur le format du tap. La conversion utilise ce format, pas une
+   supposition. `AudioBufferLayout` vérifie la disposition réelle des buffers
+   (entrelacé ou une voie par buffer) et le nombre de frames ; une incohérence
+   lève une erreur visible au lieu de produire du silence.
+3. **Réception réelle, pas seulement démarrage.** L'automate
+   `CaptureLifecycleState` distingue désormais `waitingForAudio` et
+   `receiving`. Un buffer non vide, même de silence numérique, établit la
+   réception ; un buffer de silence n'est pas une absence de source. L'arrêt
+   reste possible pendant l'attente. Un jeton de capture empêche un premier
+   buffer retardé d'un cycle précédent de faire passer le cycle suivant en
+   réception.
+4. **Interface fidèle et message actionnable.** Tant qu'aucun buffer n'est
+   arrivé, la phase affichée reste « Préparation » et la jauge ne s'anime pas.
+   Après huit secondes sans buffer, un message explique que le processus choisi
+   ne produit pas de son et qu'un navigateur peut jouer son audio dans un
+   helper séparé ; la capture n'est pas arrêtée automatiquement et aucun repli
+   global ou helper n'est tenté. Aucun texte français n'est codé dans les
+   sources : les messages sont dans les tables `en` et `fr`.
+5. **Garde-fous statiques.** `scripts/check.sh` refuse un booléen pour les clés
+   numériques de l'agrégat, `tapautostart` actif, un agrégat public ou empilé,
+   et vérifie la présence du format d'entrée de l'agrégat, de la disposition des
+   buffers et des états d'attente/réception.
+
+### Preuves de ce lot
+
+| Élément | Méthode | Résultat observé |
+|---|---|---|
+| Compilation et tests | `./scripts/check.sh` | exit 0 ; release compilée ; **81 tests, 0 échec** |
+| Agrégat CFNumber | 6 tests `TapAggregateCompositionTests` | `private`, `stacked`, `tapautostart` et dérive sont des `CFNumber` entiers, jamais des `CFBoolean` ; un seul tap ; clés égales aux constantes du SDK |
+| Buffers | 10 tests `AudioBufferLayoutTests` | entrelacé, non entrelacé, tailles inégales, buffer vide, silence d'une frame, canaux incohérents, format invalide |
+| Cycle de vie | 10 tests `CaptureLifecycleStateTests` | attente, réception au premier buffer, buffer pendant `.starting`, arrêt en attente, aucun report entre cycles |
+| Signature | `codesign --verify --strict Naada.app` | exit 0 ; équipe `BG55CF653X`, runtime durci, horodatage sécurisé |
+| Processus | `pgrep -x Naada` avant chaque build | aucun processus (exit 1) |
+| Application installée | `/Applications/Naada.app` | non modifiée par ce lot ; installation à la charge du lead |
+
+### Non observé / limites
+
+- Aucun lancement de Naada, aucune création de tap, aucun périphérique, aucune
+  capture, aucun son et aucune action TCC n'ont été effectués par l'agent. Le
+  contenu réellement capturé, le format réel des buffers, la jauge vivante et
+  la continuité du son restent à vérifier par un essai humain.
+- Avec la règle « un seul PID choisi, aucun repli helper », Chrome ne peut pas
+  être enregistré en sélectionnant l'application : son audio appartient au
+  service audio séparé. Le message des huit secondes doit le dire, mais ce
+  comportement n'a pas été observé en exécution.
+- Le HAL ne prouve pas au repos quel processus produit le son ; le diagnostic ne
+  peut donc pas nommer le helper avec certitude avant la lecture.
+- Les chemins macOS 14.0–14.1 et un refus TCC puis une reprise ne sont pas
+  exercés.
+
+### Essai humain proposé (non exécuté par l'agent)
+
+1. Ouvrir Naada et choisir une application native dont le processus principal
+   joue le son (par exemple QuickTime Player, VLC ou Musique).
+2. Démarrer l'enregistrement, puis lancer la lecture. Attendre que la phase
+   passe de « Préparation » à « Enregistrement » et que la jauge bouge.
+3. Arrêter : le MP3 doit être audible.
+4. Recommencer avec Chrome. Après huit secondes sans son, le message doit
+   expliquer que le processus choisi n'envoie pas d'audio ; le son de Chrome doit
+   rester audible et aucun repli global ou helper ne doit démarrer.

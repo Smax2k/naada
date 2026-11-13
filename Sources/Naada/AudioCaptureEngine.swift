@@ -2,6 +2,7 @@ import AVFoundation
 import CoreAudio
 import Foundation
 import NaadaCore
+import os
 
 enum AudioCaptureEngineError: Error, LocalizedError {
     case sourceApplicationNotFound(String)
@@ -139,18 +140,29 @@ final class AudioCaptureEngine {
     private var ioProcID: AudioDeviceIOProcID?
     private var lifecycle = CaptureLifecycleState()
     private var unexpectedStopError: Error?
+    private var selectedProcessObjectID: AudioObjectID?
+    /// Jeton de capture : un premier buffer retardé d'un cycle précédent ne
+    /// doit jamais faire passer la capture suivante en réception.
+    private var captureGeneration: UInt64 = 0
+    /// Jeton du cycle qui a livré son premier buffer non vide. Verrou court,
+    /// sans attente de file : le callback audio ne prend jamais
+    /// lifecycleQueue en synchrone. Un buffer retardé d'un cycle précédent
+    /// porte un autre jeton et ne peut pas établir la réception du suivant.
+    private let firstBufferGeneration = OSAllocatedUnfairLock<UInt64?>(initialState: nil)
 
     func start(application: SourceApplication, writer: MP3FileWriter) async throws {
-        let canStart = lifecycleQueue.sync { () -> Bool in
+        let canStart = lifecycleQueue.sync { () -> UInt64? in
             let available = tapID == nil
                 && aggregateID == nil
                 && ioProcID == nil
-            guard available, lifecycle.beginStart() else { return false }
+            guard available, lifecycle.beginStart() else { return nil }
             unexpectedStopError = nil
-            return true
+            selectedProcessObjectID = nil
+            captureGeneration &+= 1
+            return captureGeneration
         }
 
-        guard canStart else {
+        guard let generation = canStart else {
             writer.cancel()
             throw AudioCaptureEngineError.captureAlreadyRunning
         }
@@ -197,20 +209,17 @@ final class AudioCaptureEngine {
 
             let tapFormat = try Self.readTapFormat(tapID)
 
-            let tapEntry: [String: Any] = [
-                kAudioSubTapUIDKey: tapDescription.uuid.uuidString
-            ]
-            let aggregateDescription: [String: Any] = [
-                kAudioAggregateDeviceNameKey: "Naada — \(application.name)",
-                kAudioAggregateDeviceUIDKey: UUID().uuidString,
-                kAudioAggregateDeviceIsPrivateKey: true,
-                kAudioAggregateDeviceIsStackedKey: false,
-                kAudioAggregateDeviceTapListKey: [tapEntry],
-            ]
-
+            // Les valeurs numériques de l'agrégat sont des CFNumber, jamais
+            // des CFBoolean : `private`, `stacked` et `tapautostart` sont lus
+            // par le HAL via CFNumberGetValue.
+            let composition = TapAggregateComposition(
+                name: "Naada — \(application.name)",
+                uid: UUID().uuidString,
+                tapUID: tapDescription.uuid.uuidString
+            )
             var aggregateID = AudioObjectID(kAudioObjectUnknown)
             let aggregateStatus = AudioHardwareCreateAggregateDevice(
-                aggregateDescription as CFDictionary,
+                composition.dictionary as CFDictionary,
                 &aggregateID
             )
             guard
@@ -219,9 +228,19 @@ final class AudioCaptureEngine {
             else {
                 throw AudioCaptureEngineError.aggregateCreationFailed(aggregateStatus)
             }
-            lifecycleQueue.sync { self.aggregateID = aggregateID }
+            lifecycleQueue.sync {
+                self.aggregateID = aggregateID
+                self.selectedProcessObjectID = processObjectID
+            }
 
-            let converter = try AudioSampleConverter(streamDescription: tapFormat)
+            // L'IOProc reçoit les buffers au format d'entrée de l'agrégat.
+            // Ce format peut différer de celui du tap ; il est lu après
+            // création, avec une attente bornée, puis le tap sert de repli.
+            let aggregateFormat = await Self.readAggregateInputFormat(
+                aggregateID,
+                timeout: 1.0
+            ) ?? tapFormat
+            let converter = try AudioSampleConverter(streamDescription: aggregateFormat)
 
             var ioProcID: AudioDeviceIOProcID?
             let ioProcStatus = AudioDeviceCreateIOProcIDWithBlock(
@@ -230,7 +249,7 @@ final class AudioCaptureEngine {
                 audioQueue
             ) { [weak self] _, inputData, _, _, _ in
                 guard let self else { return }
-                self.handleAudioInput(inputData)
+                self.handleAudioInput(inputData, generation: generation)
             }
             guard ioProcStatus == noErr, let ioProcID else {
                 throw AudioCaptureEngineError.ioProcCreationFailed(ioProcStatus)
@@ -246,6 +265,9 @@ final class AudioCaptureEngine {
                 self.lastAudioLevelSentAt = 0
             }
 
+            // Sans `tapautostart`, AudioDeviceStart ne bloque jamais en
+            // attendant le premier son : il rend la main et l'IOProc est
+            // appelé lorsque le processus tapé produit réellement de l'audio.
             let startStatus = AudioDeviceStart(aggregateID, ioProcID)
             guard startStatus == noErr else {
                 throw AudioCaptureEngineError.captureStartFailed(startStatus)
@@ -255,6 +277,8 @@ final class AudioCaptureEngine {
                 guard lifecycle.isStarting, unexpectedStopError == nil else {
                     return unexpectedStopError ?? AudioCaptureEngineError.notRecording
                 }
+                // Le démarrage matériel ne prouve pas la réception : l'état
+                // reste en attente tant qu'aucun buffer non vide n'est arrivé.
                 lifecycle.markCaptureStarted()
                 return nil
             }
@@ -338,6 +362,159 @@ final class AudioCaptureEngine {
         return format
     }
 
+    /// Métadonnée HAL du processus choisi : produit-il de l'audio à cet
+    /// instant ? Lecture seule, aucun tap ni périphérique n'est ouvert.
+    private static func processIsProducingOutput(
+        _ processObjectID: AudioObjectID
+    ) -> Bool? {
+        var value: UInt32 = 0
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyIsRunningOutput,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(
+            processObjectID,
+            &address,
+            0,
+            nil,
+            &size,
+            &value
+        )
+        guard status == noErr, size == UInt32(MemoryLayout<UInt32>.size) else {
+            return nil
+        }
+        return value != 0
+    }
+
+    /// Lit le format effectif de l'entrée de l'agrégat, avec une attente
+    /// bornée. Les buffers de l'IOProc sont dans ce format, pas forcément
+    /// dans celui du tap.
+    @available(macOS 14.2, *)
+    private static func readAggregateInputFormat(
+        _ aggregateID: AudioObjectID,
+        timeout: TimeInterval
+    ) async -> AudioStreamBasicDescription? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if Task.isCancelled { return nil }
+            if let format = readFirstInputFormat(aggregateID) {
+                return format
+            }
+            if Date() >= deadline { return nil }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        } while true
+    }
+
+    @available(macOS 14.2, *)
+    private static func readFirstInputFormat(
+        _ aggregateID: AudioObjectID
+    ) -> AudioStreamBasicDescription? {
+        // Certains agrégats exposent directement leur format d'entrée avant
+        // que la liste des flux ne soit complète.
+        if let format = readDeviceInputFormat(aggregateID) {
+            return format
+        }
+
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard
+            AudioObjectGetPropertyDataSize(aggregateID, &address, 0, nil, &size) == noErr,
+            size >= UInt32(MemoryLayout<AudioStreamID>.size)
+        else {
+            return nil
+        }
+
+        let count = Int(size) / MemoryLayout<AudioStreamID>.size
+        var streams = [AudioStreamID](repeating: 0, count: count)
+        guard
+            AudioObjectGetPropertyData(aggregateID, &address, 0, nil, &size, &streams) == noErr
+        else {
+            return nil
+        }
+
+        for stream in streams {
+            if let format = readStreamFormat(stream) {
+                return format
+            }
+        }
+        return nil
+    }
+
+    @available(macOS 14.2, *)
+    private static func readDeviceInputFormat(
+        _ aggregateID: AudioObjectID
+    ) -> AudioStreamBasicDescription? {
+        var format = AudioStreamBasicDescription()
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamFormat,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let status = AudioObjectGetPropertyData(
+            aggregateID,
+            &address,
+            0,
+            nil,
+            &size,
+            &format
+        )
+        return validatedFormat(status: status, size: size, format: format)
+    }
+
+    @available(macOS 14.2, *)
+    private static func readStreamFormat(
+        _ streamID: AudioStreamID
+    ) -> AudioStreamBasicDescription? {
+        for selector in [
+            kAudioStreamPropertyVirtualFormat,
+            kAudioStreamPropertyPhysicalFormat,
+        ] {
+            var format = AudioStreamBasicDescription()
+            var address = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            let status = AudioObjectGetPropertyData(
+                streamID,
+                &address,
+                0,
+                nil,
+                &size,
+                &format
+            )
+            if let valid = validatedFormat(status: status, size: size, format: format) {
+                return valid
+            }
+        }
+        return nil
+    }
+
+    private static func validatedFormat(
+        status: OSStatus,
+        size: UInt32,
+        format: AudioStreamBasicDescription
+    ) -> AudioStreamBasicDescription? {
+        guard
+            status == noErr,
+            size == UInt32(MemoryLayout<AudioStreamBasicDescription>.size),
+            format.mSampleRate > 0,
+            format.mChannelsPerFrame > 0,
+            format.mBitsPerChannel > 0
+        else {
+            return nil
+        }
+        return format
+    }
+
     /// Arrêt d'un démarrage qui n'a jamais abouti. Tout passe par audioQueue
     /// pour laisser les callbacks déjà en file se terminer avant de fermer.
     private func teardownFailedStart(writer: MP3FileWriter) async {
@@ -360,6 +537,8 @@ final class AudioCaptureEngine {
         // Le teardown n'est terminé qu'après la libération des ressources et
         // le drainage du writer : l'automate redevient alors réutilisable.
         lifecycleQueue.sync {
+            self.selectedProcessObjectID = nil
+            self.captureGeneration &+= 1
             lifecycle.finishTeardown()
         }
     }
@@ -406,6 +585,25 @@ final class AudioCaptureEngine {
         }
     }
 
+    /// Vrai entre le démarrage matériel et le premier buffer non vide.
+    var isWaitingForAudio: Bool {
+        lifecycleQueue.sync { lifecycle.isWaitingForAudio }
+    }
+
+    /// Vrai dès qu'un buffer non vide a été converti pendant ce cycle.
+    var isReceivingAudio: Bool {
+        lifecycleQueue.sync { lifecycle.isReceivingAudio }
+    }
+
+
+    /// Interroge à nouveau le HAL, sans créer ni lire de tap. Sert au message
+    /// « source muette » ; ne déclenche aucun repli global ou helper.
+    func selectedProcessIsProducingOutput() -> Bool? {
+        let processObjectID = lifecycleQueue.sync { selectedProcessObjectID }
+        guard let processObjectID else { return nil }
+        return Self.processIsProducingOutput(processObjectID)
+    }
+
     func stop() async throws -> CaptureStopResult {
         guard #available(macOS 14.2, *) else {
             throw AudioCaptureEngineError.unsupportedSystemVersion
@@ -427,6 +625,7 @@ final class AudioCaptureEngine {
             self.ioProcID = nil
             self.aggregateID = nil
             self.tapID = nil
+            self.captureGeneration &+= 1
             return (ioProc, aggregate, tap)
         }
 
@@ -504,6 +703,8 @@ final class AudioCaptureEngine {
         // Resources détruites et writer drainé : le moteur peut être réutilisé
         // même si la fermeture du MP3 signale ensuite une erreur.
         lifecycleQueue.sync {
+            self.selectedProcessObjectID = nil
+            self.captureGeneration &+= 1
             lifecycle.finishTeardown()
         }
 
@@ -520,17 +721,41 @@ final class AudioCaptureEngine {
 
     /// Appelé par AudioDevice sur `audioQueue`, avec les données d'entrée de
     /// l'agrégat. Tout l'état du pipeline est déjà confiné à cette file.
-    private func handleAudioInput(_ bufferList: UnsafePointer<AudioBufferList>) {
+    private func handleAudioInput(
+        _ bufferList: UnsafePointer<AudioBufferList>,
+        generation: UInt64
+    ) {
         guard let writer, let converter else { return }
 
         do {
-            guard let samples = try converter.convert(bufferList) else { return }
+            guard let samples = try converter.convert(bufferList), !samples.isEmpty else {
+                return
+            }
+            noteFirstBuffer(generation: generation)
             publishAudioLevel(for: samples)
             try writer.append(samples)
         } catch {
             guard !reportedAudioError else { return }
             reportedAudioError = true
             onAudioError?(error)
+        }
+    }
+
+    /// Marque la première réception sans prendre `lifecycleQueue` en
+    /// synchrone depuis le callback audio : un simple drapeau sous verrou,
+    /// puis une transition asynchrone portant le jeton du cycle.
+    private func noteFirstBuffer(generation: UInt64) {
+        let isFirst = firstBufferGeneration.withLock { seen -> Bool in
+            guard seen != generation else { return false }
+            seen = generation
+            return true
+        }
+        guard isFirst else { return }
+
+        lifecycleQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.captureGeneration == generation else { return }
+            self.lifecycle.markFirstBufferReceived()
         }
     }
 
@@ -547,14 +772,15 @@ final class AudioCaptureEngine {
     }
 }
 
-/// Convertit les échantillons du tap (souvent Float32 planaire) en PCM 16 bits
-/// entrelacé, au format attendu par l'encodeur MP3.
+/// Convertit les échantillons de l'entrée de l'agrégat en PCM 16 bits
+/// entrelacé, au format attendu par l'encodeur MP3. Le format et la
+/// disposition réelle des buffers sont vérifiés avant toute copie : une
+/// incohérence lève une erreur visible plutôt que de produire du silence.
 private final class AudioSampleConverter {
     private let sourceFormat: AVAudioFormat
     private let targetFormat: AVAudioFormat
     private let converter: AVAudioConverter
-    private let bytesPerSample: Int
-    private let sourceBytesPerFrame: Int
+    private let layout: AudioStreamFormat
 
     init(streamDescription: AudioStreamBasicDescription) throws {
         var description = streamDescription
@@ -570,37 +796,56 @@ private final class AudioSampleConverter {
                 channels: AVAudioChannelCount(MP3FileWriter.channelCount),
                 interleaved: true
             ),
-            let converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+            let converter = AVAudioConverter(from: sourceFormat, to: targetFormat),
+            let layout = AudioStreamFormat(
+                sampleRate: streamDescription.mSampleRate,
+                channelsPerFrame: Int(streamDescription.mChannelsPerFrame),
+                bitsPerChannel: Int(streamDescription.mBitsPerChannel),
+                bytesPerFrame: Int(streamDescription.mBytesPerFrame),
+                isInterleaved: (streamDescription.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
+            )
         else {
             throw AudioCaptureEngineError.audioConversionFailed
         }
 
-        let sourceASBD = sourceFormat.streamDescription.pointee
-        let sampleWidth = max(1, Int(sourceASBD.mBitsPerChannel / 8))
-        let declaredFrameWidth = Int(sourceASBD.mBytesPerFrame)
-
         self.sourceFormat = sourceFormat
         self.targetFormat = targetFormat
         self.converter = converter
-        self.bytesPerSample = sampleWidth
-        self.sourceBytesPerFrame = sourceFormat.isInterleaved
-            ? (declaredFrameWidth > 0
-                ? declaredFrameWidth
-                : Int(sourceASBD.mChannelsPerFrame) * sampleWidth)
-            : sampleWidth
+        self.layout = layout
     }
 
     func convert(_ bufferList: UnsafePointer<AudioBufferList>) throws -> [Int16]? {
         let sourceBuffers = UnsafeMutableAudioBufferListPointer(
             UnsafeMutablePointer(mutating: bufferList)
         )
-        guard !sourceBuffers.isEmpty, sourceBytesPerFrame > 0 else { return nil }
+        guard !sourceBuffers.isEmpty else { return nil }
 
-        let frameCount = sourceBuffers
-            .map { Int($0.mDataByteSize) / sourceBytesPerFrame }
-            .min() ?? 0
+        let descriptors = sourceBuffers.map {
+            AudioBufferLayout.Buffer(
+                channelCount: Int($0.mNumberChannels),
+                byteSize: Int($0.mDataByteSize)
+            )
+        }
+        let summary = AudioBufferLayout.analyze(
+            format: layout,
+            buffers: descriptors
+        )
+        guard summary.isCompatible else {
+            throw AudioCaptureEngineError.audioConversionFailed
+        }
+        guard !summary.isEmpty else { return nil }
+
+        // Un seul buffer entrelacé est traité comme tel. Pour une voie, les
+        // deux dispositions sont identiques. Toute autre combinaison est
+        // refusée explicitement.
+        if layout.channelsPerFrame > 1 {
+            guard (summary.kind == .interleaved) == sourceFormat.isInterleaved else {
+                throw AudioCaptureEngineError.audioConversionFailed
+            }
+        }
+
+        let frameCount = summary.frameCount
         guard frameCount > 0 else { return nil }
-
         guard let input = AVAudioPCMBuffer(
             pcmFormat: sourceFormat,
             frameCapacity: AVAudioFrameCount(frameCount)
@@ -612,7 +857,9 @@ private final class AudioSampleConverter {
         let destinationBuffers = UnsafeMutableAudioBufferListPointer(
             input.mutableAudioBufferList
         )
-        if sourceFormat.isInterleaved {
+
+        switch summary.kind {
+        case .interleaved:
             guard
                 let source = sourceBuffers.first,
                 let sourceData = source.mData,
@@ -621,35 +868,44 @@ private final class AudioSampleConverter {
             else {
                 throw AudioCaptureEngineError.audioConversionFailed
             }
-            let byteCount = min(
-                Int(source.mDataByteSize),
-                Int(destination.mDataByteSize)
-            )
+            let byteCount = frameCount
+                * layout.channelsPerFrame
+                * layout.bytesPerSample
+            guard
+                byteCount <= Int(source.mDataByteSize),
+                byteCount <= Int(destination.mDataByteSize)
+            else {
+                throw AudioCaptureEngineError.audioConversionFailed
+            }
             destinationData.copyMemory(
                 from: UnsafeRawPointer(sourceData),
                 byteCount: byteCount
             )
-        } else {
-            let channelCount = min(sourceBuffers.count, destinationBuffers.count)
-            guard channelCount > 0 else {
+        case .deinterleaved:
+            guard destinationBuffers.count >= layout.channelsPerFrame else {
                 throw AudioCaptureEngineError.audioConversionFailed
             }
-            for channel in 0..<channelCount {
+            for channel in 0..<layout.channelsPerFrame {
                 guard
                     let sourceData = sourceBuffers[channel].mData,
                     let destinationData = destinationBuffers[channel].mData
                 else {
                     throw AudioCaptureEngineError.audioConversionFailed
                 }
-                let byteCount = min(
-                    Int(sourceBuffers[channel].mDataByteSize),
-                    Int(destinationBuffers[channel].mDataByteSize)
-                )
+                let byteCount = frameCount * layout.bytesPerSample
+                guard
+                    byteCount <= Int(sourceBuffers[channel].mDataByteSize),
+                    byteCount <= Int(destinationBuffers[channel].mDataByteSize)
+                else {
+                    throw AudioCaptureEngineError.audioConversionFailed
+                }
                 destinationData.copyMemory(
                     from: UnsafeRawPointer(sourceData),
                     byteCount: byteCount
                 )
             }
+        case .incompatible:
+            throw AudioCaptureEngineError.audioConversionFailed
         }
 
         let ratio = targetFormat.sampleRate / sourceFormat.sampleRate

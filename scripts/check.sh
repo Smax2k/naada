@@ -16,21 +16,60 @@ if grep -REn "$FORBIDDEN_SCREEN_PATTERN" Sources packaging >/dev/null; then
     exit 1
 fi
 
-FORBIDDEN_TAP_PATTERN='CATapMuted|kAudioHardwarePropertyDefaultOutputDevice|muteBehavior *= *\.(muted|mutedWhenTapped)|isPrivate *= *false|isExclusive *= *true|usesBundleIdentifiers *= *true|targetsDefaultOutputDevice *= *true'
+FORBIDDEN_TAP_PATTERN='CATapMuted|kAudioHardwarePropertyDefaultOutputDevice|muteBehavior *= *\.(muted|mutedWhenTapped)|isPrivate *= *false|isExclusive *= *true|usesBundleIdentifiers *= *true|targetsDefaultOutputDevice *= *true|stereoGlobalTap|monoGlobalTap|GlobalTapButExclude'
 if grep -REn "$FORBIDDEN_TAP_PATTERN" Sources >/dev/null; then
     echo "Échec : un tap muet ou un changement de sortie par défaut subsiste :" >&2
     grep -REn "$FORBIDDEN_TAP_PATTERN" Sources >&2
     exit 1
 fi
 
+# Les clés numériques de l'agrégat sont des CFNumber entiers : un Bool Swift
+# se bride en CFBoolean, que CFNumberGetValue refuse.
+FORBIDDEN_AGGREGATE_PATTERN='IsPrivateKey: *true|IsStackedKey: *false|TapAutoStartKey: *true|NSNumber\(value: *(true|false)\)'
+if grep -REn "$FORBIDDEN_AGGREGATE_PATTERN" Sources >/dev/null; then
+    echo "Échec : un réglage d'agrégat est encore un booléen au lieu d'un CFNumber :" >&2
+    grep -REn "$FORBIDDEN_AGGREGATE_PATTERN" Sources >&2
+    exit 1
+fi
+
+if grep -REn 'tapAutoStart: *true|isPrivate: *false|isStacked: *true' Sources/Naada >/dev/null; then
+    echo "Échec : le moteur ne doit jamais activer tapautostart, ni rendre l'agrégat public, ni l'empiler." >&2
+    exit 1
+fi
+
 for required_symbol in \
     kAudioHardwarePropertyTranslatePIDToProcessObject \
     AudioHardwareCreateProcessTap \
-    kAudioAggregateDeviceTapListKey \
-    kAudioSubTapUIDKey \
-    kAudioTapPropertyFormat; do
+    AudioHardwareCreateAggregateDevice \
+    kAudioTapPropertyFormat \
+    kAudioDevicePropertyStreams \
+    kAudioStreamPropertyVirtualFormat \
+    TapAggregateComposition \
+    AudioBufferLayout.analyze; do
     if ! grep -Fq "$required_symbol" Sources/Naada/AudioCaptureEngine.swift; then
         echo "Échec : le chemin de tap de processus n'utilise pas $required_symbol." >&2
+        exit 1
+    fi
+done
+
+# Les clés littérales du plan pur sont confrontées aux constantes du SDK
+# dans les tests, qui tournent avant ce contrôle.
+for required_symbol in \
+    kAudioAggregateDeviceTapListKey \
+    kAudioSubTapUIDKey \
+    kAudioAggregateDeviceIsPrivateKey \
+    kAudioAggregateDeviceIsStackedKey \
+    kAudioAggregateDeviceTapAutoStartKey \
+    kAudioSubTapDriftCompensationKey; do
+    if ! grep -Fq "$required_symbol" Tests/NaadaCoreTests/TapAggregateCompositionTests.swift; then
+        echo "Échec : $required_symbol n'est pas vérifié face au plan d'agrégat." >&2
+        exit 1
+    fi
+done
+
+for required_symbol in waitingForAudio markFirstBufferReceived; do
+    if ! grep -Fq "$required_symbol" Sources/NaadaCore/CaptureLifecycleState.swift; then
+        echo "Échec : l'automate de capture n'expose pas $required_symbol." >&2
         exit 1
     fi
 done
