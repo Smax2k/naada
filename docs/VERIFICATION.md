@@ -813,3 +813,102 @@ La source synthétique était le PID `60714`, processus distinct.
   lot (diagnostic minimal d'un lot antérieur). Ils n'ont pas été créés ici et
   n'ont pas été détruits ; aucun agrégat ni périphérique « Naada » ne subsiste.
   Les taps créés par cette sonde ont été détruits par le moteur à l'arrêt.
+
+## Tests, garde-fous et installation — 13 novembre 2026
+
+### Résultat
+
+Les tests unitaires et les contrôles statiques passent sur l'état courant, et le
+bundle signé construit par `./scripts/check.sh` est installé dans
+`/Applications`, identique au bundle du dépôt. **Aucune capture micro réelle n'a
+été faite** : aucune entrée audio n'a été ouverte, aucune invite TCC n'a été
+affichée ni acceptée à la place de Jonathan, et le mélange application + micro
+n'a jamais été produit, décodé ni écouté. Les tests ci-dessous ne remplacent pas
+cette preuve.
+
+- Dépôt : `32166ff`, arbre initial propre hors `design-work/` non suivi
+  préexistant.
+- Machine : macOS 27.2.1 (26B131), Apple Silicon.
+- Naada arrêtée avant, pendant et après : `pgrep -x Naada` sans sortie, exit
+  `1`.
+- Aucun lancement de l'application, aucun son émis, aucun clic sur une invite,
+  aucun appel à `tccutil`, aucune lecture de `TCC.db`, aucune notarisation.
+
+### Tests et garde-fous
+
+`./scripts/check.sh` : exit `0`. Il enchaîne `./scripts/test.sh`, la
+reconstruction release signée et les contrôles statiques ci-dessous.
+
+- **137 tests unitaires, 0 échec** (14 suites) : plan des descendants audio
+  (19), disposition des tampons (10), sélection des sources (13), contraintes
+  du tap (16), présets (16), réglages de session (13), noms de fichier (11),
+  cycle de capture (10), mélange PCM (7), composition d'agrégat (6), session
+  (5), niveau (4), horloge (4), écriture MP3 (3).
+- Ces tests sont **purs** : ils n'ouvrent ni périphérique audio, ni tap, ni
+  entrée micro, et ne demandent aucune autorisation. Ils valident des types et
+  des transitions, pas le chemin Core Audio réel.
+- Garde-fous statiques vérifiés : absence de tout symbole ou clé
+  ScreenCaptureKit ; tap privé et non muet, sans changement de sortie par
+  défaut, sans ciblage par bundle entier ni tap global ; clés d'agrégat en
+  CFNumber entiers ; symboles requis du tap de processus ; `requestAccess`
+  confiné à `AudioCaptureEngine.swift` ; catalogue micro sans
+  `AVCaptureDevice` ni `requestAccess` ; parité EN/FR des tables et des
+  descriptions ; `LSMinimumSystemVersion` 14.2 ; icône clair/sombre ; absence
+  de dylib externe et de ScreenCaptureKit dans les liaisons, CoreAudio lié.
+
+| Commande | Résultat |
+|---|---|
+| `pgrep -x Naada` (avant `check.sh`, avant et après installation) | aucune sortie, exit `1` |
+| `./scripts/check.sh` | exit `0` ; 137 tests, 0 échec ; release signée ; contrôles statiques OK |
+| `codesign --verify --strict --verbose=2 Naada.app` | exit `0` |
+| `codesign --verify --strict --verbose=2 /Applications/Naada.app` | exit `0` |
+| `codesign -d --entitlements -` (les deux bundles) | `com.apple.security.device.audio-input` = `true` |
+| `diff -qr /Applications/Naada.app Naada.app` | aucun écart, exit `0` |
+| `shasum -a 256` du binaire (les deux bundles) | `634050e6…` identique |
+| `spctl -a -vv /Applications/Naada.app` | `rejected` « Unnotarized Developer ID », exit `3`, attendu |
+
+### Entitlement microphone
+
+`packaging/Naada.entitlements` déclare `com.apple.security.device.audio-input`,
+et `./scripts/build.sh` l'applique à la signature. Sous runtime durci, sans cet
+entitlement, macOS ne présente pas la demande d'accès micro : l'appel
+`AVCaptureDevice.requestAccess(for: .audio)` échouerait sans invite. Le bundle
+construit et le bundle installé portent tous deux l'entitlement (`true`), et
+`scripts/check.sh` échoue si la clé manque. L'entitlement rend la demande
+possible ; il ne l'accorde pas. Aucune invite n'a été observée dans ce lot.
+
+### État de /Applications
+
+- Ancien bundle : CDHash `100f23a7…`, signé le 13 Nov 2026 à 05:40:49.
+- Bundle construit par `./scripts/check.sh` :
+  `CDHash=43490ddc1ac05becb56df1a14b264d34e9251a49`, horodatage
+  `13 Nov 2026 at 05:44:18`, équipe `BG55CF653X`, runtime durci, exigence
+  stable sans CDHash.
+- `/Applications/Naada.app` remplacé par `ditto` après `pgrep -x Naada` vide.
+  Même CDHash, même horodatage et même binaire
+  (`634050e64854c48ef77ac922f67b109e16f22af09382f8caddb2be7993d5b7d9`) que le
+  bundle du dépôt ; `diff -qr` sans écart ; `codesign --verify --strict` exit
+  `0` des deux côtés. Aucune quarantaine. `spctl -a -vv` : refusé
+  « Unnotarized Developer ID », attendu sans notarisation et sans
+  contournement.
+
+### Ce qui reste non prouvé
+
+- **Capture micro réelle** : aucune entrée audio ouverte, aucun tampon micro
+  observé, aucun MP3 issu d'un micro. Le chemin
+  `AVCaptureDevice` → tampons → mélange n'est couvert par aucune exécution.
+- **Mélange** : les trois modes (application seule, micro seul, les deux) sont
+  couverts par des types purs et des tests unitaires, pas par une capture
+  réelle ; un enregistrement application + micro n'a jamais été produit,
+  décodé ni écouté.
+- **TCC** : aucune invite affichée ni acceptée ; aucun accord propre à
+  `com.naada.recorder` n'est prouvé. La preuve antérieure sur source synthétique
+  était attribuée au processus `node` responsable, pas au bundle.
+- **Alignement des flux** : le mélange additionne les tampons dans leur ordre
+  d'arrivée ; aucun test ne prouve un alignement temporel entre le tap de
+  l'application et l'entrée micro.
+- **Débranchement du micro** : non observé ; le comportement en cours de capture
+  (erreur, silence, reprise) n'est pas établi.
+- **Parcours réel** : aucun lancement GUI, aucun clic sur **Enregistrer**,
+  aucune vérification de la liste des micros ni du rendu de la fenêtre.
+- Aucun commit, push, publication ni notarisation.

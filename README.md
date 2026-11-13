@@ -33,12 +33,14 @@ remplacée ; son état est consigné dans
 
 La première capture réelle peut déclencher l'autorisation macOS « Enregistrement
 de l'écran » : ScreenCaptureKit sert aussi à capter l'audio d'une application.
-Naada ne capture aucune image, n'ouvre aucun microphone et ne modifie pas la
+Naada ne capture aucune image, ne demande l'accès au micro que si un micro est
+choisi — et seulement après le clic sur **Enregistrer** — et ne modifie pas la
 sortie audio.
 
 ## Utilisation
 
-1. Choisir l'**application source** dans la liste des applications ouvertes.
+1. Choisir une **application source** dans la liste des applications ouvertes, un
+   **micro**, ou les deux.
 2. Choisir le **dossier de sortie** (bouton `Choisir…`). Le dernier dossier est
    mémorisé dans les préférences de l'application.
 3. Ajuster le **titre de session** (il reprend le nom de l'application par
