@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import CoreAudio
 import Darwin
 import Foundation
@@ -18,6 +19,12 @@ enum AudioCaptureEngineError: Error, LocalizedError {
     case captureAlreadyRunning
     case audioConversionFailed
     case missingWriter
+    case noSourceSelected
+    case microphonePermissionDenied
+    case selectedMicrophoneUnavailable
+    case microphoneOpenFailed
+    case microphoneFormatUnavailable
+    case microphoneStartFailed
 
     var errorDescription: String? {
         switch self {
@@ -91,6 +98,36 @@ enum AudioCaptureEngineError: Error, LocalizedError {
             return NSLocalizedString("An audio sample could not be converted to PCM.", comment: "Audio conversion error")
         case .missingWriter:
             return NSLocalizedString("The output MP3 file is no longer available.", comment: "Missing MP3 writer error")
+        case .noSourceSelected:
+            return NSLocalizedString(
+                "Select an application, a microphone, or both before recording.",
+                comment: "Missing capture source error"
+            )
+        case .microphonePermissionDenied:
+            return NSLocalizedString(
+                "Microphone access is not allowed. Allow it in System Settings, then try again.",
+                comment: "Microphone permission denied error"
+            )
+        case .selectedMicrophoneUnavailable:
+            return NSLocalizedString(
+                "The selected microphone is no longer available.",
+                comment: "Selected microphone unavailable error"
+            )
+        case .microphoneOpenFailed:
+            return NSLocalizedString(
+                "The microphone could not be opened.",
+                comment: "Microphone opening error"
+            )
+        case .microphoneFormatUnavailable:
+            return NSLocalizedString(
+                "The microphone's audio format could not be read.",
+                comment: "Microphone format error"
+            )
+        case .microphoneStartFailed:
+            return NSLocalizedString(
+                "The microphone could not start capturing audio.",
+                comment: "Microphone start error"
+            )
         }
     }
 }
@@ -116,7 +153,7 @@ private struct CaptureEndpoints {
     let ioProcID: AudioDeviceIOProcID
 }
 
-/// Capture l'audio d'une seule application avec un tap de processus Core Audio.
+/// Capture l'audio d'une application, d'un microphone, ou des deux.
 ///
 /// Choix de conception :
 /// - le PID choisi est la racine ; seuls ses descendants dont la commande
@@ -125,8 +162,12 @@ private struct CaptureEndpoints {
 ///   sortie système, sans coupure ni redirection ;
 /// - l'agrégat qui porte le tap est privé et n'est jamais défini comme sortie
 ///   par défaut ; seule son entrée est lue par un IOProc, comme un micro ;
+/// - le microphone n'est ouvert que s'il est choisi, après la permission
+///   demandée au démarrage ; sans micro, aucune entrée n'est touchée ;
+/// - quand les deux sources sont actives, elles sont converties séparément,
+///   additionnées par `PCMMix`, et seul le résultat est écrit et mesuré ;
 /// - aucun écran, aucune fenêtre et aucune image ne sont demandés ;
-/// - le pipeline MP3, la conversion et la jauge restent inchangés.
+/// - le pipeline MP3 et la jauge restent inchangés.
 final class AudioCaptureEngine {
     var onUnexpectedStop: ((Error, URL?) -> Void)?
     var onAudioError: ((Error) -> Void)?
@@ -146,9 +187,29 @@ final class AudioCaptureEngine {
     private var reportedAudioError = false
     private var lastAudioLevelSentAt: TimeInterval = 0
 
+    // Capture du microphone et mélange : accès exclusivement sur audioQueue.
+    private var microphoneCapture: MicrophoneCapture?
+    private var isMicrophoneCaptureActive = false
+    /// Vrai seulement quand l'application et le microphone sont tous deux
+    /// capturés. Les échantillons des deux sources passent alors par
+    /// `PCMMix` ; sinon le flux unique va directement au writer.
+    private var mixingEnabled = false
+    private var applicationPendingSamples: [Int16] = []
+    private var microphonePendingSamples: [Int16] = []
+
+    /// Jeton du cycle courant pour la note « premier buffer » du micro. Il
+    /// suit la génération acceptée, y compris après un remplacement de tap,
+    /// et vaut 0 hors capture micro.
+    private let microphoneCycleGeneration = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+
     /// Intervalle minimal entre deux mesures publiées : 10 envois par seconde
     /// au plus, avant tout saut vers le MainActor.
     private static let audioLevelInterval: TimeInterval = 0.1
+
+    /// Au-delà de cette attente sans contrepartie (100 ms de stéréo 48 kHz),
+    /// les échantillons d'un seul flux sont écrits avec du silence : la
+    /// latence et la mémoire restent bornées sans perdre de son.
+    private static let maximumUnpairedSamples = 9_600
 
     // Cycle de vie du tap : accès exclusivement sur lifecycleQueue.
     private var tapID: AudioObjectID?
@@ -187,7 +248,42 @@ final class AudioCaptureEngine {
         helperRefreshTask?.cancel()
     }
 
+    /// Chemin application seule, utilisé par la sonde : aucune permission
+    /// microphone n'est demandée et aucune entrée audio n'est ouverte.
     func start(application: SourceApplication, writer: MP3FileWriter) async throws {
+        try await startCapture(
+            application: application,
+            microphone: .none,
+            writer: writer
+        )
+    }
+
+    /// Démarre l'application choisie, le microphone choisi, ou les deux.
+    ///
+    /// La permission microphone n'est demandée qu'ici, au moment de l'appel,
+    /// donc après le clic sur Enregistrer. Un refus échoue le démarrage et
+    /// annule le fichier : aucun MP3 vide n'est laissé.
+    func start(
+        application: SourceApplication?,
+        microphone: MicrophoneChoice,
+        writer: MP3FileWriter
+    ) async throws {
+        guard application != nil || microphone != .none else {
+            writer.cancel()
+            throw AudioCaptureEngineError.noSourceSelected
+        }
+        try await startCapture(
+            application: application,
+            microphone: microphone,
+            writer: writer
+        )
+    }
+
+    private func startCapture(
+        application: SourceApplication?,
+        microphone: MicrophoneChoice,
+        writer: MP3FileWriter
+    ) async throws {
         let canStart = lifecycleQueue.sync { () -> UInt64? in
             let available = tapID == nil
                 && aggregateID == nil
@@ -205,6 +301,7 @@ final class AudioCaptureEngine {
             helperRefreshTask?.cancel()
             helperRefreshTask = nil
             activeGeneration.withLock { $0 = 0 }
+            microphoneCycleGeneration.withLock { $0 = 0 }
             captureGeneration &+= 1
             return captureGeneration
         }
@@ -218,70 +315,110 @@ final class AudioCaptureEngine {
             guard #available(macOS 14.2, *) else {
                 throw AudioCaptureEngineError.unsupportedSystemVersion
             }
-            guard let pid = application.pid, pid > 0 else {
-                throw AudioCaptureEngineError.sourceApplicationNotFound(application.name)
-            }
 
-            // Le plan est recalculé à chaque démarrage : le PID choisi reste la
-            // racine, seuls ses descendants audio vérifiés sont ajoutés. Aucun
-            // bundle ID, aucun helper trouvé hors de l'arbre, aucun repli.
-            let plan = ApplicationAudioProcesses.plan(
-                rootPID: pid,
-                processes: LiveProcessTable.snapshot()
-            )
-            let selection = ApplicationAudioTapSelection(
-                plan: plan,
-                translatedObjectIDs: Self.translatedObjectIDs(for: plan)
-            )
-            guard selection.isUsable else {
-                throw AudioCaptureEngineError.sourceApplicationNotFound(application.name)
+            // Permission et préparation du micro : uniquement sur ce chemin,
+            // donc au moment du clic sur Enregistrer. Le chemin application
+            // seule n'y entre jamais.
+            var preparedMicrophone: MicrophoneCapture?
+            if microphone != .none {
+                try await Self.requestMicrophonePermission()
+                let prepared = try makeMicrophoneCapture(choice: microphone)
+                preparedMicrophone = prepared
+                audioQueue.sync {
+                    self.microphoneCapture = prepared
+                }
             }
-            let constraints = selection.constraints
+            let usesMicrophone = preparedMicrophone != nil
 
-            do {
-                try constraints.validate()
-            } catch let error as ProcessTapConstraintError {
-                throw AudioCaptureEngineError.invalidTapConfiguration(error.violations)
+            var resources: CaptureResources?
+            var selection: ApplicationAudioTapSelection?
+            if let application {
+                guard let pid = application.pid, pid > 0 else {
+                    throw AudioCaptureEngineError.sourceApplicationNotFound(application.name)
+                }
+
+                // Le plan est recalculé à chaque démarrage : le PID choisi
+                // reste la racine, seuls ses descendants audio vérifiés sont
+                // ajoutés. Aucun bundle ID, aucun helper trouvé hors de
+                // l'arbre, aucun repli.
+                let plan = ApplicationAudioProcesses.plan(
+                    rootPID: pid,
+                    processes: LiveProcessTable.snapshot()
+                )
+                let tapSelection = ApplicationAudioTapSelection(
+                    plan: plan,
+                    translatedObjectIDs: Self.translatedObjectIDs(for: plan)
+                )
+                guard tapSelection.isUsable else {
+                    throw AudioCaptureEngineError.sourceApplicationNotFound(application.name)
+                }
+                let constraints = tapSelection.constraints
+
+                do {
+                    try constraints.validate()
+                } catch let error as ProcessTapConstraintError {
+                    throw AudioCaptureEngineError.invalidTapConfiguration(error.violations)
+                }
+
+                let created = try await createResources(
+                    applicationName: application.name,
+                    constraints: constraints,
+                    helperPIDs: tapSelection.translatedHelpers.map(\.process.pid),
+                    generation: generation
+                )
+                resources = created
+                selection = tapSelection
             }
-
-            let resources = try await createResources(
-                applicationName: application.name,
-                constraints: constraints,
-                helperPIDs: selection.translatedHelpers.map(\.process.pid),
-                generation: generation
-            )
 
             let installed = lifecycleQueue.sync { () -> Bool in
                 guard captureGeneration == generation, lifecycle.isStarting else {
                     return false
                 }
-                installLocked(resources, selection: selection)
-                selectedApplicationName = application.name
+                if let resources, let selection {
+                    installLocked(resources, selection: selection)
+                }
+                selectedApplicationName = application?.name
                 activeGeneration.withLock { $0 = generation }
+                microphoneCycleGeneration.withLock {
+                    $0 = usesMicrophone ? generation : 0
+                }
                 return true
             }
             guard installed else {
-                Self.destroy(resources)
+                if let resources {
+                    Self.destroy(resources)
+                }
                 throw AudioCaptureEngineError.notRecording
             }
 
-            // Le writer est installé avant le démarrage effectif, mais
+            // Le writer est installé avant tout démarrage matériel, mais
             // uniquement sur la file audio sérialisée.
             audioQueue.sync {
                 self.writer = writer
                 self.reportedAudioError = false
                 self.lastAudioLevelSentAt = 0
+                self.isMicrophoneCaptureActive = usesMicrophone
+                self.mixingEnabled = usesMicrophone && application != nil
+                self.applicationPendingSamples.removeAll()
+                self.microphonePendingSamples.removeAll()
             }
 
-            // Sans `tapautostart`, AudioDeviceStart ne bloque jamais en
-            // attendant le premier son : il rend la main et l'IOProc est
-            // appelé lorsque le processus tapé produit réellement de l'audio.
-            let startStatus = AudioDeviceStart(
-                resources.aggregateID,
-                resources.ioProcID
-            )
-            guard startStatus == noErr else {
-                throw AudioCaptureEngineError.captureStartFailed(startStatus)
+            if let preparedMicrophone {
+                try preparedMicrophone.start()
+            }
+
+            if let resources {
+                // Sans `tapautostart`, AudioDeviceStart ne bloque jamais en
+                // attendant le premier son : il rend la main et l'IOProc est
+                // appelé lorsque le processus tapé produit réellement de
+                // l'audio.
+                let startStatus = AudioDeviceStart(
+                    resources.aggregateID,
+                    resources.ioProcID
+                )
+                guard startStatus == noErr else {
+                    throw AudioCaptureEngineError.captureStartFailed(startStatus)
+                }
             }
 
             let startupError: Error? = lifecycleQueue.sync {
@@ -297,11 +434,56 @@ final class AudioCaptureEngine {
                 throw startupError
             }
 
-            startHelperRefresh(generation: generation)
+            if application != nil {
+                startHelperRefresh(generation: generation)
+            }
         } catch {
             await teardownFailedStart(writer: writer)
             throw error
         }
+    }
+
+    /// Demande la permission micro, au moment du démarrage explicite.
+    ///
+    /// Appelé uniquement quand un microphone est choisi : le chemin
+    /// application seule n'atteint jamais `AVCaptureDevice`. Aucune sortie
+    /// par défaut n'est lue ni modifiée, et l'écran n'est jamais demandé.
+    private static func requestMicrophonePermission() async throws {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            break
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            guard granted else {
+                throw AudioCaptureEngineError.microphonePermissionDenied
+            }
+        case .denied, .restricted:
+            throw AudioCaptureEngineError.microphonePermissionDenied
+        @unknown default:
+            throw AudioCaptureEngineError.microphonePermissionDenied
+        }
+    }
+
+    /// Prépare l'entrée micro, sans la démarrer. Les buffers convertis sont
+    /// remis à `audioQueue`, seule file qui écrit dans le fichier.
+    private func makeMicrophoneCapture(
+        choice: MicrophoneChoice
+    ) throws -> MicrophoneCapture {
+        try MicrophoneCapture(
+            choice: choice,
+            onSamples: { [weak self] samples in
+                guard let self else { return }
+                self.audioQueue.async { [weak self] in
+                    self?.handleMicrophoneInput(samples)
+                }
+            },
+            onFailure: { [weak self] error in
+                guard let self else { return }
+                self.audioQueue.async { [weak self] in
+                    self?.reportAudioError(error)
+                }
+            }
+        )
     }
 
     /// Traduit chaque PID du plan. Un PID sans objet processus Core Audio est
@@ -708,9 +890,13 @@ final class AudioCaptureEngine {
 
         var outputURL: URL?
         audioQueue.sync {
+            self.stopMicrophoneEngineLocked()
             if let writer = self.writer {
+                // L'arrêt conserve ce qui a déjà été reçu, micro compris.
+                _ = try? self.drainMixedSamples(flushRemainder: true)
                 outputURL = try? writer.finish()
             }
+            self.resetMixStateLocked()
             self.writer = nil
             self.reportedAudioError = false
             self.lastAudioLevelSentAt = 0
@@ -738,6 +924,7 @@ final class AudioCaptureEngine {
         }
 
         audioQueue.sync {
+            self.stopMicrophoneLocked()
             let installed = self.writer
             installed?.cancel()
             if installed !== writer {
@@ -951,19 +1138,27 @@ final class AudioCaptureEngine {
             }
         }
 
-        // Laisse la file audio se vider, puis ferme le writer dans le même
-        // bloc sérialisé : aucun callback ne peut plus l'utiliser après.
+        // Laisse la file audio se vider, arrête le micro, écrit le reliquat du
+        // mélange, puis ferme le writer dans le même bloc sérialisé : aucun
+        // callback ne peut plus l'utiliser après.
         var outputURL: URL?
         var finishError: Error?
         audioQueue.sync {
+            self.stopMicrophoneEngineLocked()
+            do {
+                try self.drainMixedSamples(flushRemainder: true)
+            } catch {
+                finishError = error
+            }
             let writer = self.writer
             if let writer {
                 do {
                     outputURL = try writer.finish()
                 } catch {
-                    finishError = error
+                    finishError = finishError ?? error
                 }
             }
+            self.resetMixStateLocked()
             self.writer = nil
             self.reportedAudioError = false
             self.lastAudioLevelSentAt = 0
@@ -1081,6 +1276,14 @@ final class AudioCaptureEngine {
             }
         guard let retry else { return false }
 
+        // Le micro n'appartient pas au tap : seul son jeton de premier buffer
+        // suit la nouvelle génération du cycle.
+        microphoneCycleGeneration.withLock { token in
+            if token != 0 {
+                token = retry.generation
+            }
+        }
+
         if let endpoints = retry.endpoints {
             Self.destroy(endpoints)
         }
@@ -1137,7 +1340,7 @@ final class AudioCaptureEngine {
         return false
     }
 
-    // MARK: - IOProc
+    // MARK: - IOProc et mélange
 
     /// Appelé par AudioDevice sur `audioQueue`, avec les données d'entrée de
     /// l'agrégat et le convertisseur propre à cet IOProc. Tout l'état du
@@ -1150,20 +1353,121 @@ final class AudioCaptureEngine {
         // Un buffer d'un tap remplacé ne doit ni établir la réception ni
         // écrire dans le writer du cycle courant.
         guard activeGeneration.withLock({ $0 }) == generation else { return }
-        guard let writer else { return }
+        guard writer != nil else { return }
 
         do {
             guard let samples = try converter.convert(bufferList), !samples.isEmpty else {
                 return
             }
             noteFirstBuffer(generation: generation)
-            publishAudioLevel(for: samples)
-            try writer.append(samples)
+            if mixingEnabled {
+                applicationPendingSamples.append(contentsOf: samples)
+                try drainMixedSamples(flushRemainder: false)
+            } else {
+                try writeSamples(samples)
+            }
         } catch {
-            guard !reportedAudioError else { return }
-            reportedAudioError = true
-            onAudioError?(error)
+            reportAudioError(error)
         }
+    }
+
+    /// Appelé sur `audioQueue` avec les échantillons micro déjà convertis en
+    /// PCM 16 bits stéréo 48 kHz. Le micro ne dépend pas du tap : un
+    /// remplacement de tap ne l'interrompt pas.
+    private func handleMicrophoneInput(_ samples: [Int16]) {
+        guard isMicrophoneCaptureActive, writer != nil else { return }
+        noteMicrophoneFirstBuffer()
+        do {
+            if mixingEnabled {
+                microphonePendingSamples.append(contentsOf: samples)
+                try drainMixedSamples(flushRemainder: false)
+            } else {
+                try writeSamples(samples)
+            }
+        } catch {
+            reportAudioError(error)
+        }
+    }
+
+    private func noteMicrophoneFirstBuffer() {
+        let generation = microphoneCycleGeneration.withLock { $0 }
+        guard generation != 0 else { return }
+        noteFirstBuffer(generation: generation)
+    }
+
+    /// Écrit le mélange des deux flux. Tant que les deux côtés ont des
+    /// échantillons, ils sont additionnés au plus court par `PCMMix` ; si un
+    /// seul côté attend au-delà de la fenêtre, il est écrit avec du silence
+    /// pour borner la latence sans perdre de son. `flushRemainder` vide tout
+    /// à l'arrêt.
+    private func drainMixedSamples(flushRemainder: Bool) throws {
+        guard mixingEnabled, writer != nil else { return }
+
+        while true {
+            let applicationCount = applicationPendingSamples.count
+            let microphoneCount = microphonePendingSamples.count
+
+            let mixed: [Int16]
+            if applicationCount > 0 && microphoneCount > 0 {
+                let count = min(applicationCount, microphoneCount)
+                let application = Array(applicationPendingSamples.prefix(count))
+                let microphone = Array(microphonePendingSamples.prefix(count))
+                applicationPendingSamples.removeFirst(count)
+                microphonePendingSamples.removeFirst(count)
+                mixed = PCMMix.mix(application, microphone)
+            } else if applicationCount > 0,
+                flushRemainder || applicationCount >= Self.maximumUnpairedSamples
+            {
+                mixed = PCMMix.mix(applicationPendingSamples, nil)
+                applicationPendingSamples.removeAll()
+            } else if microphoneCount > 0,
+                flushRemainder || microphoneCount >= Self.maximumUnpairedSamples
+            {
+                mixed = PCMMix.mix(microphonePendingSamples, nil)
+                microphonePendingSamples.removeAll()
+            } else {
+                break
+            }
+
+            try writeSamples(mixed)
+        }
+    }
+
+    /// Unique porte d'écriture : le niveau publié est celui des échantillons
+    /// réellement écrits, jamais celui d'une source avant mélange.
+    private func writeSamples(_ samples: [Int16]) throws {
+        guard !samples.isEmpty, let writer else { return }
+        try writer.append(samples)
+        publishAudioLevel(for: samples)
+    }
+
+    private func reportAudioError(_ error: Error) {
+        guard !reportedAudioError else { return }
+        reportedAudioError = true
+        onAudioError?(error)
+    }
+
+    // MARK: - Arrêt du microphone et du mélange
+
+    /// Arrête la lecture micro sans toucher aux tampons déjà reçus.
+    /// Appelé uniquement sur `audioQueue`.
+    private func stopMicrophoneEngineLocked() {
+        microphoneCapture?.stop()
+        microphoneCapture = nil
+        isMicrophoneCaptureActive = false
+        microphoneCycleGeneration.withLock { $0 = 0 }
+    }
+
+    /// Arrête le micro et abandonne le mélange sans rien écrire.
+    private func stopMicrophoneLocked() {
+        stopMicrophoneEngineLocked()
+        resetMixStateLocked()
+    }
+
+    private func resetMixStateLocked() {
+        mixingEnabled = false
+        applicationPendingSamples.removeAll()
+        microphonePendingSamples.removeAll()
     }
 
     /// Marque la première réception sans prendre `lifecycleQueue` en
@@ -1371,6 +1675,247 @@ private final class AudioSampleConverter {
         let sampleCount = Int(output.frameLength) * MP3FileWriter.channelCount
         let pointer = raw.assumingMemoryBound(to: Int16.self)
         return Array(UnsafeBufferPointer(start: pointer, count: sampleCount))
+    }
+}
+
+/// Entrée microphone préparée : permission déjà accordée, périphérique choisi,
+/// tap installé et conversion en PCM 16 bits stéréo 48 kHz.
+///
+/// Tant que `start()` n'est pas appelé, aucun échantillon n'est lu. La classe
+/// ne connaît ni le writer ni le mélange : elle remet ses échantillons
+/// convertis au moteur, qui seul décide de l'écriture.
+private final class MicrophoneCapture {
+    private let engine: AVAudioEngine
+    private var isTapInstalled = true
+
+    init(
+        choice: MicrophoneChoice,
+        onSamples: @escaping ([Int16]) -> Void,
+        onFailure: @escaping (Error) -> Void
+    ) throws {
+        guard choice != .none else {
+            throw AudioCaptureEngineError.noSourceSelected
+        }
+
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+
+        if case let .selected(uid, _) = choice {
+            guard let deviceID = Self.inputDeviceID(forUID: uid) else {
+                throw AudioCaptureEngineError.selectedMicrophoneUnavailable
+            }
+            guard let audioUnit = input.audioUnit else {
+                throw AudioCaptureEngineError.microphoneOpenFailed
+            }
+            var device = deviceID
+            let status = AudioUnitSetProperty(
+                audioUnit,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &device,
+                UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+            guard status == noErr else {
+                throw AudioCaptureEngineError.microphoneOpenFailed
+            }
+        }
+
+        // Format réel de l'entrée après choix du périphérique. Un format nul
+        // signifie que l'entrée n'est pas exploitable : erreur distincte,
+        // jamais du silence présenté comme une capture.
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw AudioCaptureEngineError.microphoneFormatUnavailable
+        }
+
+        let converter = try MicrophoneSampleConverter(sourceFormat: format)
+        input.installTap(
+            onBus: 0,
+            bufferSize: 1_024,
+            format: format
+        ) { buffer, _ in
+            do {
+                guard let samples = try converter.convert(buffer), !samples.isEmpty else {
+                    return
+                }
+                onSamples(samples)
+            } catch {
+                onFailure(error)
+            }
+        }
+
+        self.engine = engine
+    }
+
+    func start() throws {
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            throw AudioCaptureEngineError.microphoneStartFailed
+        }
+    }
+
+    func stop() {
+        guard isTapInstalled else { return }
+        isTapInstalled = false
+        if engine.isRunning {
+            engine.stop()
+        }
+        engine.inputNode.removeTap(onBus: 0)
+    }
+
+    /// Traduit l'UID Core Audio choisi en périphérique d'entrée. Un UID
+    /// inconnu ou un périphérique sans entrée valent « introuvable ».
+    private static func inputDeviceID(forUID uid: String) -> AudioDeviceID? {
+        let cfUID = uid as CFString
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = withUnsafePointer(to: cfUID) { uidPointer in
+            AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject),
+                &address,
+                UInt32(MemoryLayout<CFString>.size),
+                uidPointer,
+                &size,
+                &deviceID
+            )
+        }
+
+        guard
+            status == noErr,
+            deviceID != AudioDeviceID(kAudioObjectUnknown),
+            size == UInt32(MemoryLayout<AudioDeviceID>.size),
+            deviceHasInputStreams(deviceID)
+        else {
+            return nil
+        }
+        return deviceID
+    }
+
+    private static func deviceHasInputStreams(_ deviceID: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let status = AudioObjectGetPropertyDataSize(
+            deviceID,
+            &address,
+            0,
+            nil,
+            &size
+        )
+        return status == noErr && size > 0
+    }
+}
+
+/// Convertit les buffers de l'entrée micro en PCM 16 bits entrelacé stéréo
+/// 48 kHz, sans gain. Une entrée mono est dupliquée sur les deux voies ; au-delà
+/// de deux voies, les deux premières sont retenues.
+private final class MicrophoneSampleConverter {
+    private let sourceFormat: AVAudioFormat
+    private let targetFormat: AVAudioFormat
+    private let converter: AVAudioConverter
+
+    init(sourceFormat: AVAudioFormat) throws {
+        let sourceChannels = Int(sourceFormat.channelCount)
+        guard sourceChannels > 0 else {
+            throw AudioCaptureEngineError.microphoneFormatUnavailable
+        }
+
+        let targetChannels = AVAudioChannelCount(min(sourceChannels, 2))
+        guard
+            sourceFormat.sampleRate > 0,
+            let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: Double(MP3FileWriter.sampleRate),
+                channels: targetChannels,
+                interleaved: true
+            ),
+            let converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+        else {
+            throw AudioCaptureEngineError.microphoneFormatUnavailable
+        }
+
+        if sourceChannels > 2 {
+            converter.channelMap = [
+                NSNumber(value: 0),
+                NSNumber(value: 1),
+            ]
+        }
+
+        self.sourceFormat = sourceFormat
+        self.targetFormat = targetFormat
+        self.converter = converter
+    }
+
+    func convert(_ buffer: AVAudioPCMBuffer) throws -> [Int16]? {
+        guard buffer.frameLength > 0 else { return nil }
+
+        let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
+        guard let output = AVAudioPCMBuffer(
+            pcmFormat: targetFormat,
+            frameCapacity: capacity
+        ) else {
+            throw AudioCaptureEngineError.audioConversionFailed
+        }
+
+        var suppliedInput = false
+        var conversionError: NSError?
+        let status = converter.convert(
+            to: output,
+            error: &conversionError
+        ) { _, inputStatus in
+            if suppliedInput {
+                inputStatus.pointee = .noDataNow
+                return nil
+            }
+            suppliedInput = true
+            inputStatus.pointee = .haveData
+            return buffer
+        }
+
+        guard conversionError == nil else {
+            throw AudioCaptureEngineError.audioConversionFailed
+        }
+        guard status == .haveData || status == .inputRanDry else {
+            throw AudioCaptureEngineError.audioConversionFailed
+        }
+        guard output.frameLength > 0 else { return nil }
+
+        let channelCount = Int(targetFormat.channelCount)
+        let sampleCount = Int(output.frameLength) * channelCount
+        let outputBuffer = output.audioBufferList.pointee.mBuffers
+        guard
+            let raw = outputBuffer.mData,
+            Int(outputBuffer.mDataByteSize) >= sampleCount * MemoryLayout<Int16>.size
+        else {
+            throw AudioCaptureEngineError.audioConversionFailed
+        }
+
+        let pointer = raw.assumingMemoryBound(to: Int16.self)
+        let samples = Array(
+            UnsafeBufferPointer(start: pointer, count: sampleCount)
+        )
+
+        guard channelCount == 1 else { return samples }
+
+        var stereo: [Int16] = []
+        stereo.reserveCapacity(samples.count * 2)
+        for sample in samples {
+            stereo.append(sample)
+            stereo.append(sample)
+        }
+        return stereo
     }
 }
 

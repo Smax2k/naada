@@ -437,3 +437,64 @@ stricte et testable sans Core Audio.
 
 Aucun tap n'a été créé pendant ce lot : Naada pid 5574 est restée active et
 Chrome ne produisait aucun son. Le comportement runtime reste à prouver.
+
+## Microphone facultatif fondu dans le même MP3 — 13 novembre 2026
+
+L'application seule, le microphone seul et les deux ensemble écrivent dans le
+même MP3 stéréo 48 kHz. Aucun gain n'est appliqué et aucune source ne se replie
+silencieusement sur l'autre.
+
+### Trois modes
+
+- **Application seule** (`MicrophoneChoice.none`) : chemin historique inchangé.
+  Aucune permission microphone n'est demandée et aucune entrée audio n'est
+  ouverte ; `AVCaptureDevice` n'est jamais atteint par ce chemin.
+- **Microphone seul** : ni tap ni agrégat de processus ne sont créés. L'entrée
+  choisie est ouverte dans un `AVAudioEngine`, convertie en PCM 16 bits stéréo
+  48 kHz, puis écrite.
+- **Les deux** : le tap de l'application reste privé et non muet, le son
+  système reste audible et la sortie par défaut n'est ni visée ni changée. Les
+  deux flux sont convertis séparément, puis additionnés par `PCMMix` ; seul le
+  résultat du mélange est écrit dans le MP3 et mesuré pour la jauge.
+
+### Permission tardive
+
+`AVCaptureDevice.requestAccess(for: .audio)` n'est appelé que par
+`AudioCaptureEngine.start(application:microphone:writer:)`, au moment de
+l'appel, donc après le clic sur Enregistrer. Le chemin application seule ne
+l'appelle jamais. Un refus échoue le démarrage, annule le fichier et ne laisse
+aucun MP3 vide.
+
+### Ouverture du microphone
+
+- `.systemDefault` laisse `AVAudioEngine` utiliser l'entrée par défaut du
+  système.
+- `.selected` traduit l'UID Core Audio en `AudioDeviceID`
+  (`kAudioHardwarePropertyTranslateUIDToDevice`), vérifie que le périphérique
+  expose une entrée, puis le fixe sur l'AudioUnit du nœud d'entrée
+  (`kAudioOutputUnitProperty_CurrentDevice`).
+- Un UID introuvable échoue avec « The selected microphone is no longer
+  available. ». Une permission refusée et une ouverture ou un format illisible
+  ont chacune leur erreur distincte.
+
+### Conversion et mélange
+
+- Le micro est converti avec `AVAudioConverter` vers PCM 16 bits entrelacé
+  48 kHz. Une entrée mono est dupliquée sur les deux voies ; au-delà de deux
+  voies, les deux premières sont retenues.
+- Le mélange additionne les échantillons par `PCMMix`, sans gain, avec
+  saturation aux bornes `Int16`. Quand les deux côtés ont des échantillons, ils
+  sont appariés au plus court ; si un seul côté attend plus de 100 ms de stéréo,
+  il est écrit avec du silence pour borner la latence et la mémoire. Aucun
+  échantillon n'est perdu au profit de l'autre source.
+- La jauge ne mesure que les échantillons réellement écrits dans le fichier.
+
+### Limite de ce lot
+
+Aucun accès micro réel n'a été exécuté : la permission TCC, l'ouverture d'un
+périphérique précis et le mélange audible restent à prouver au runtime. Le
+bundle signé avec le runtime durci doit en outre porter l'entitlement
+`com.apple.security.device.audio-input` : sans lui, macOS ne présente jamais la
+demande TCC et l'entrée reste inaccessible, même avec
+`NSMicrophoneUsageDescription`. Cette capacité de signature reste à ajouter au
+paquetage avant de conclure.

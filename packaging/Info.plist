@@ -38,5 +38,7 @@
 	<string>Naada — MP3 encoder Shine under LGPL-2, see CREDITS.md</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Naada records only the chosen application's audio to an MP3 file: no images are captured, sound stays audible, and no capture starts before your click on Record.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Naada opens the microphone only when you choose one, after your click on Record: no images are captured and sound stays audible.</string>
 </dict>
 </plist>

@@ -83,6 +83,47 @@ if ! grep -Fq 'muteBehavior = .unmuted' Sources/Naada/AudioCaptureEngine.swift; 
     exit 1
 fi
 
+echo "→ Contrôles de la permission microphone"
+# La permission micro n'est demandée qu'au démarrage explicite, par le moteur.
+if ! grep -Fq 'AVCaptureDevice.requestAccess(for: .audio)' Sources/Naada/AudioCaptureEngine.swift; then
+    echo "Échec : le moteur ne demande pas la permission microphone au démarrage." >&2
+    exit 1
+fi
+
+REQUEST_ACCESS_VIOLATIONS="$(grep -REn 'requestAccess' Sources \
+    | grep -Ev '^Sources/Naada/AudioCaptureEngine.swift:[0-9]+:' || true)"
+if [[ -n "$REQUEST_ACCESS_VIOLATIONS" ]]; then
+    echo "Échec : requestAccess doit rester confiné à AudioCaptureEngine.swift :" >&2
+    printf '%s\n' "$REQUEST_ACCESS_VIOLATIONS" >&2
+    exit 1
+fi
+
+# Le catalogue énumère les entrées sans en ouvrir une ni demander la permission.
+# Les commentaires sont retirés : une note « AVCaptureDevice n'est pas utilisé »
+# ne doit pas faire échouer le contrôle.
+MICROPHONE_CATALOG="Sources/Naada/MicrophoneCatalog.swift"
+if [[ -f "$MICROPHONE_CATALOG" ]]; then
+python3 - "$MICROPHONE_CATALOG" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+text = re.sub(r"//[^\n]*", "", text)
+for pattern in ("AVCaptureDevice", "requestAccess"):
+    if pattern in text:
+        print(
+            f"Échec : {path} utilise {pattern} ; le catalogue ne doit ni ouvrir "
+            "un périphérique ni demander la permission.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+PY
+fi
+echo "✓ Permission micro demandée seulement par le moteur, catalogue sans accès direct"
+
 # Le plan des descendants audio reste pur et vérifiable sans Core Audio.
 for required_symbol in \
     audio.mojom.AudioService \
@@ -238,6 +279,16 @@ if [[ "$AUDIO_USAGE" != *"no images"* || "$AUDIO_USAGE" != *"stays audible"* || 
     exit 1
 fi
 
+MICROPHONE_USAGE="$(plutil -extract NSMicrophoneUsageDescription raw -o - Naada.app/Contents/Info.plist)"
+if [[ -z "$MICROPHONE_USAGE" ]]; then
+    echo "Échec : NSMicrophoneUsageDescription est absente ou vide." >&2
+    exit 1
+fi
+if [[ "$MICROPHONE_USAGE" != *"only when you choose"* || "$MICROPHONE_USAGE" != *"after your click"* || "$MICROPHONE_USAGE" != *"no images"* || "$MICROPHONE_USAGE" != *"stays audible"* ]]; then
+    echo "Échec : la description micro anglaise doit préciser only when you choose, after your click, no images et stays audible." >&2
+    exit 1
+fi
+
 MIN_MACOS="$(plutil -extract LSMinimumSystemVersion raw -o - Naada.app/Contents/Info.plist)"
 if [[ "$MIN_MACOS" != "14.2" ]]; then
     echo "Échec : LSMinimumSystemVersion doit valoir 14.2 (valeur : ${MIN_MACOS:-absente})." >&2
@@ -319,7 +370,14 @@ for phrase in ("aucune image", "reste audible", "avant votre clic"):
     if phrase not in french_usage:
         fail(f"la description audio française ne contient pas « {phrase} »")
 
-print("✓ Localisations en/fr présentes, région en, clés et description audio paritaires")
+if en_plist.get("NSMicrophoneUsageDescription") != base_plist.get("NSMicrophoneUsageDescription"):
+    fail("la description microphone anglaise diffère du Info.plist de base")
+french_microphone_usage = fr_plist.get("NSMicrophoneUsageDescription", "")
+for phrase in ("aucune image", "reste audible", "si vous en choisissez", "après votre clic"):
+    if phrase not in french_microphone_usage:
+        fail(f"la description microphone française ne contient pas « {phrase} »")
+
+print("✓ Localisations en/fr présentes, région en, clés et descriptions audio/micro paritaires")
 PY
 
 python3 - <<'PY'

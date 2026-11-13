@@ -1,4 +1,5 @@
 /* French Info.plist localization. */
 
 "NSAudioCaptureUsageDescription" = "Naada enregistre uniquement le son de l'application choisie dans un fichier MP3 : aucune image n'est capturée, le son reste audible et aucune capture ne démarre avant votre clic sur Enregistrer.";
+"NSMicrophoneUsageDescription" = "Naada n'ouvre le microphone que si vous en choisissez un, après votre clic sur Enregistrer : aucune image n'est capturée et le son reste audible.";
 "NSHumanReadableCopyright" = "Naada — encodeur MP3 Shine sous LGPL-2, voir CREDITS.md";
