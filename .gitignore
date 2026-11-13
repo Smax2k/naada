@@ -1,4 +1,5 @@
 .build/
+dist/
 Naada.app/
 .test-artifacts/
 .devcheck/
