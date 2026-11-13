@@ -66,32 +66,32 @@ it the script stops with an explicit message and produces no bundle.
 Drag `Naada.app` into `/Applications`. Naada is a standard, self-contained app
 bundle: no installer, no helper, no background service.
 
-## Signature and Gatekeeper
+## Signature, notarization and Gatekeeper
 
 Each build is signed **Developer ID Application** (team `BG55CF653X`) with the
 hardened runtime and a secure timestamp, and its designated requirement is
 pinned to the bundle identifier and the team — not to the CDHash — so rebuilding
 keeps the same code requirement.
 
-The build is **not notarized**: Apple has not reviewed it. A copy downloaded
-from the internet (a release DMG, for example) carries the quarantine flag, so
-the first launch is blocked by Gatekeeper with a message such as *“Naada” cannot
-be opened because Apple cannot check it for malicious software.*
+The **release DMG is notarized by Apple and carries a stapled ticket**, and so
+does the `Naada.app` inside it. A copy downloaded from the internet carries the
+quarantine flag, and Gatekeeper accepts it on first launch without any dialog,
+even on a Mac that is offline: macOS reads the ticket from the disk image and
+from the app bundle instead of asking Apple about the build.
 
-How to explain it to a user:
+A bundle you assemble yourself with `./scripts/build.sh` is signed the same way
+but is **not notarized** — that is the local development path, and a locally
+built app carries no quarantine flag, so Gatekeeper has nothing to assess.
 
-> The app is signed with a real Apple Developer ID, but the build was not
-> submitted to Apple for notarization, so macOS refuses the first launch. Open
-> the app once, dismiss the dialog, then go to **System Settings → Privacy &
-> Security**, scroll to the Security section and click **Open Anyway** next to
-> Naada, then authenticate. macOS remembers the choice for that copy of the app.
-> Right-clicking the app and choosing **Open** also works on older macOS
-> versions.
+If a copy is ever refused, the supported fix is the per-app flow: open the app
+once, dismiss the dialog, then go to **System Settings → Privacy & Security**,
+scroll to the Security section, click **Open Anyway** next to Naada and
+authenticate. Never disable Gatekeeper system-wide, remove the quarantine
+attribute, or run the app as root; if that button does not appear, rebuild the
+app locally rather than weakening the system.
 
-Never ask a user to disable Gatekeeper system-wide, to remove the quarantine
-attribute, or to run the app as root: the per-app **Open Anyway** flow is the
-supported path. If that button does not appear, the copy is not trusted on that
-Mac — rebuild it locally rather than weakening the system.
+The notarization submissions, their identifiers and the stapling checks are
+recorded in [`docs/NOTARISATION.md`](docs/NOTARISATION.md).
 
 ## Usage
 
@@ -147,9 +147,12 @@ compiled icon; it needs the signing certificate.
 ```
 
 The disk image is named `Naada`, contains only `Naada.app` and a link to
-`/Applications`, and is written to `dist/Naada.dmg`. The signed DMG attached to
-a GitHub release is the same build: signed, not notarized, so the Gatekeeper
-note above applies.
+`/Applications`, and is written to `dist/Naada.dmg`. `scripts/dmg.sh` signs the
+bundle, not the disk image, and does not submit anything to Apple: notarizing
+the DMG, stapling the ticket into the image and into the app, then replacing the
+release asset is a separate, manual step documented in
+[`docs/NOTARISATION.md`](docs/NOTARISATION.md). The DMG attached to the GitHub
+release has been through it.
 
 ## Project layout
 

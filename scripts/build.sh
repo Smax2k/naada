@@ -126,5 +126,5 @@ fi
 
 echo "✓ $APP"
 echo "  Signature : Developer ID Application (équipe $TEAM_ID), runtime durci, horodatage sécurisé"
-echo "  Non notarisée : Gatekeeper peut refuser le lancement direct."
+echo "  Non notarisée : bundle local, sans quarantaine ; notarisation manuelle (docs/NOTARISATION.md)."
 echo "  Lancement manuel : open \"$APP\""

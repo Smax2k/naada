@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Construit (sauf --no-build) puis empaquette Naada.app dans dist/Naada.dmg.
 # Le contenu du volume se limite à Naada.app et à un lien vers /Applications.
-# Aucune notarisation, aucun envoi à Apple.
+# La notarisation et l'agrafage sont une étape manuelle distincte :
+# voir docs/NOTARISATION.md. Ce script n'envoie rien à Apple.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -73,4 +74,4 @@ hdiutil verify "$DMG" >/dev/null
 SIZE="$(du -h "$DMG" | cut -f1 | tr -d ' ')"
 echo "✓ $DMG ($SIZE)"
 echo "  Signature : Developer ID Application (équipe $TEAM_ID)"
-echo "  Non notarisé : Gatekeeper bloque le premier lancement de la copie téléchargée."
+echo "  Non notarisé : la notarisation et l'agrafage se font ensuite (docs/NOTARISATION.md)."

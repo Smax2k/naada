@@ -1,10 +1,15 @@
-# Notarisation Developer ID — procédure exacte, sans envoi
+# Notarisation Developer ID — procédure et journal d'exécution
 
-État au 2026-11-12. Ce document décrit la procédure de notarisation de Naada.
-**Aucune commande d'envoi, de notarisation ou d'agrafage n'a été exécutée pour
-le produire.** Les commandes marquées INTERDITE exigent un consentement explicite
-et écrit de Jonathan à la transmission du fichier à Apple ; ce consentement est
-absent à ce jour.
+**Exécutée le 2026-11-13** : le `Naada.app` et le DMG de la version 1.0.0 sont
+notarisés par Apple, agrafés et validés, et le ticket est présent dans les deux.
+Le journal en fin de document donne les identifiants de soumission, les empreintes
+et les contrôles. Le blocage Gatekeeper décrit auparavant dans le README ne
+concerne plus la version publiée ; il reste vrai d'un bundle assemblé localement.
+
+Les sections suivantes décrivent la procédure préparée le 2026-11-12. Leurs
+mentions « non exécutée » et « INTERDITE sans consentement » sont conservées comme
+historique de préparation ; le consentement écrit de Jonathan à l'envoi a été
+donné le 2026-11-13.
 
 ## Périmètre
 
@@ -64,12 +69,12 @@ la commande.
 
 | Sous-commande | Usage (aide asc 6.2.0) | Nature | Statut |
 |---|---|---|---|
-| `submit` | `asc notarization submit --file <path> [--wait] [--poll-interval 30s] [--timeout 1h] [--output json]` | envoi du fichier à Apple | INTERDITE sans consentement |
+| `submit` | `asc notarization submit --file <path> [--wait] [--poll-interval 30s] [--timeout 1h] [--output json]` | envoi du fichier à Apple | exécutée le 2026-11-13 (zip du bundle, puis DMG) |
 | `status` | `asc notarization status --id "SUBMISSION_ID"` | lecture | non exécutée |
 | `log` | `asc notarization log --id "SUBMISSION_ID"` | lecture | non exécutée |
 | `list` | `asc notarization list [--limit N]` | lecture | non exécutée |
-| `staple` | `asc notarization staple --file <path> --confirm` | mutation locale + ticket | INTERDITE sans consentement |
-| `validate` | `asc notarization validate --file <path>` | lecture locale | non exécutée |
+| `staple` | `asc notarization staple --file <path> --confirm` | mutation locale + ticket | exécutée le 2026-11-13 (app et DMG) |
+| `validate` | `asc notarization validate --file <path>` | lecture locale | exécutée le 2026-11-13 (app et DMG) |
 
 `submit` accepte `.zip`, `.dmg` ou `.pkg`. `staple` et `validate` acceptent
 `.app`, `.dmg` ou `.pkg`, jamais un `.zip` directement.
@@ -116,7 +121,7 @@ ditto -c -k --keepParent "Naada.app" "Naada.zip"
 doit préserver le bundle signé. Un zip ne peut pas être agrafé : on agrafe le
 `.app`, puis on recrée le zip.
 
-## 4. Envoi — NON EXÉCUTÉ, INTERDIT
+## 4. Envoi
 
 ```bash
 ASC_PROFILE="<profil>" asc notarization submit \
@@ -125,8 +130,8 @@ ASC_PROFILE="<profil>" asc notarization submit \
   --output json
 ```
 
-**NON EXÉCUTÉE — INTERDITE avant consentement explicite de Jonathan à la
-transmission (absent).**
+**Exécutée le 2026-11-13** avec le consentement écrit de Jonathan, profil
+`jbahu` (équipe `BG55CF653X`), sur le zip du bundle puis sur le DMG.
 
 - L'aide de `submit` ne montre ni `--dry-run` ni `--confirm` : la commande crée
   la soumission et téléverse le fichier dès son lancement. Il n'existe aucun mode
@@ -135,8 +140,8 @@ transmission (absent).**
   un profil, une clé ou un chemin.
 - `--wait` est facultatif ; sans lui, conserver l'identifiant de soumission pour
   `status`.
-- Aucune clé, aucun accord, aucun fichier n'a été envoyé pour produire ce
-  document.
+- Les envois du 2026-11-13 ont été faits avec ce seul consentement, sur les
+  deux fichiers décrits au journal.
 
 Consentement requis : Jonathan doit confirmer explicitement, par écrit, la
 transmission de **ce fichier précis** (chemin et empreinte SHA-256) avec le
@@ -153,13 +158,13 @@ ASC_PROFILE="<profil>" asc notarization log --id "<SUBMISSION_ID>" --output json
 Statuts : `Accepted`, `In Progress`, `Invalid`, `Rejected`. Attendre `Accepted`
 avant d'agrafer. Le log donne les motifs d'un refus.
 
-## 6. Agrafage — NON EXÉCUTÉ, INTERDIT
+## 6. Agrafage
 
 ```bash
 ASC_PROFILE="<profil>" asc notarization staple --file "Naada.app" --confirm
 ```
 
-**NON EXÉCUTÉE — INTERDITE avant consentement explicite (absent).**
+**Exécutée le 2026-11-13** sur `Naada.app` puis sur `dist/Naada.dmg`.
 
 - `--confirm` est obligatoire ; la commande modifie l'artefact en place et peut
   nécessiter le réseau pour récupérer le ticket.
@@ -210,4 +215,66 @@ Sans ces points, s'arrêter :
 | `asc search notarization` | 10 résultats, mêmes sous-commandes |
 | `git log -1 ac05ecc` | `Stabilise Naada Developer ID signature across builds` |
 
-Ce document ne remplace pas une preuve d'exécution : il n'y en a aucune.
+Les preuves d'exécution du 2026-11-13 sont dans le journal ci-dessous.
+
+## Journal d'exécution — 2026-11-13
+
+Consentement : Jonathan a autorisé explicitement l'envoi à Apple. Profil `asc` :
+`jbahu` (clé d'équipe, identifiant `D27XSLV3NQ`), équipe `BG55CF653X`, `asc`
+6.2.0. Aucun secret lu ni affiché, aucun fichier de credential modifié.
+
+### Version publiée
+
+Avant toute opération, le DMG de la release `v1.0.0` et le bundle du dépôt étaient
+identiques : app extraite de `dist/Naada.dmg` identique à `Naada.app`
+(`diff -rq` vide), CDHash `bbeb3ef3e516c0c25b3b1b19c485fa41835a6d2e`. Aucun code
+n'a été reconstruit : la version notarisée est exactement celle publiée.
+
+### 1. Bundle
+
+| Étape | Commande | Résultat |
+|---|---|---|
+| Archive | `ditto -c -k --keepParent --sequesterRsrc Naada.app Naada.zip` | SHA-256 `191f1f78a81d36e554783a511667f84681730d741f396dfbbd59ea2367bb97cd` |
+| Envoi | `asc notarization submit --file Naada.zip --wait` | `Accepted`, id `be39e34d-76db-4553-a3ec-bb8634357d78` |
+| Agrafage | `asc notarization staple --file Naada.app --confirm` | `stapled: true`, `validated: true` |
+| Contrôles | `stapler validate`, `codesign --verify --strict` | ticket présent, signature valide, CDHash inchangé (`bbeb3ef3…`) |
+
+### 2. DMG
+
+`./scripts/dmg.sh --no-build` a réempaqueté le bundle agrafé ; `/Applications`
+n'a pas été touché et Naada ne tournait pas. Le DMG lui-même a été signé avant
+l'envoi.
+
+| Étape | Commande | Résultat |
+|---|---|---|
+| Signature | `codesign --sign "Developer ID Application: Jonathan Bahu (BG55CF653X)" --timestamp dist/Naada.dmg` | horodatage 2026-11-13 07:07:52 ; `codesign --verify --strict` OK |
+| Envoi | `asc notarization submit --file dist/Naada.dmg --wait` | `Accepted`, id `78e83cf1-1908-4985-8cc2-1dbc13e6c648` |
+| Agrafage | `asc notarization staple --file dist/Naada.dmg --confirm` | « The staple and validate action worked! » |
+| Validation | `asc notarization validate --file dist/Naada.dmg` | `validated: true` |
+| Gatekeeper | `spctl -a -vvv -t open --context context:primary-signature dist/Naada.dmg` | `accepted`, `source=Notarized Developer ID` |
+
+L'agrafage d'un DMG signé fait afficher à `asc` un avertissement : « artifact
+target changed after stapling ». C'est attendu, le ticket modifie l'image signée ;
+les contrôles qui font foi passent tous : `codesign --verify --strict` OK,
+`asc notarization validate` OK, `spctl` accepte en `Notarized Developer ID`.
+
+### 3. Contrôle de la copie téléchargée
+
+Le bundle agrafé a été extrait du DMG, marqué `com.apple.quarantine`, puis évalué
+sans être lancé : `stapler validate` OK, `spctl -a -t exec` → `accepted`,
+`source=Notarized Developer ID`, CDHash `bbeb3ef3…`.
+
+### 4. Asset de la release
+
+`gh release upload v1.0.0 dist/Naada.dmg --clobber`, puis retéléchargement :
+SHA-256 identique, `86f8131b01a269ecebdbf0daf0f575565f1b2eeb6028a0f71b46f2a620d9a93f`
+(6 064 975 octets) ; ticket valide et `spctl` accepte sur la copie retéléchargée.
+
+### Ce qui n'est pas vérifié
+
+- Téléchargement réel dans Safari ou Chrome puis premier lancement par
+  double-clic : non fait ici (aucun lancement de l'application, aucun dialogue
+  Gatekeeper observé).
+- `TCC` et la capture audio : hors périmètre, inchangés.
+- `/Applications/Naada.app` n'a pas été remplacé : c'est le même code sans ticket
+  agrafé, ce qui ne gêne pas un lancement local (aucune quarantaine).
